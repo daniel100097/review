@@ -27,6 +27,8 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   const pull = useQuery(trpc.pulls.get.queryOptions(input));
   const files = useQuery(trpc.pulls.files.queryOptions(input));
   const comments = useQuery(trpc.pulls.comments.queryOptions(input));
+  const [commentsHidden, toggleComments] = useStoredToggle("hideReviewComments");
+  const visibleComments = useMemo(() => commentsHidden ? [] : comments.data ?? [], [commentsHidden, comments.data]);
 
   const addComment = useMutation(
     trpc.pulls.addComment.mutationOptions({
@@ -47,7 +49,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   );
 
   // Memoized: the diff list rebuilds its rows whenever this array changes.
-  const inline = useMemo(() => comments.data?.filter(c => c.position) ?? [], [comments.data]);
+  const inline = useMemo(() => visibleComments.filter(c => c.position), [visibleComments]);
   const [tab, setTab] = useState("files");
   const [jumpTo, setJumpTo] = useState<{ path?: string; group?: number; key: number }>();
   const byContributor = useContributorFilter(input);
@@ -77,11 +79,17 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
       ]}
       actions={
         pull.data && (
-          <Button variant="outline" size="sm" asChild>
-            <a href={pull.data.url} target="_blank" rel="noreferrer">
-              Open <ExternalLink />
-            </a>
-          </Button>
+          <>
+            <Button variant="outline" size="sm" onClick={toggleComments} aria-pressed={commentsHidden}>
+              {commentsHidden ? <MessageSquareText /> : <MessageSquareOff />}
+              {commentsHidden ? "Show" : "Hide"} comments
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a href={pull.data.url} target="_blank" rel="noreferrer">
+                Open <ExternalLink />
+              </a>
+            </Button>
+          </>
         )
       }
     >
@@ -121,9 +129,10 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
               <div className="rounded-md border bg-card p-4 text-sm whitespace-pre-wrap">
                 {pull.data.body || <span className="text-muted-foreground">No description.</span>}
               </div>
-              {comments.error && <QueryError error={comments.error} />}
-              {comments.data
-                ?.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))
+              {commentsHidden && <p role="status" className="text-sm text-muted-foreground">Comments are hidden.</p>}
+              {!commentsHidden && comments.error && <QueryError error={comments.error} />}
+              {visibleComments
+                .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))
                 .map(c => (
                   <CommentItem
                     key={c.id}

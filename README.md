@@ -88,6 +88,8 @@ Agents run the installed `claude` or `codex` CLI with its existing login, throug
 
 ### Questions about diff lines
 
+Use **Hide comments** in the review page header to hide pull request comments in both the conversation and the diff, including comments on outdated lines. **Show comments** restores them. The preference is remembered in your browser.
+
 Click a line's **+** (shift-click another to select a range), type a question and press **Ask** (Ctrl+Enter); **Comment** posts to the forge instead. The answer streams into a thread under the line, with follow-ups that continue the same agent session. Threads are stored locally and marked "earlier push" once the pull request moves on; the agent keeps answering about the commit it was asked on.
 
 For context the agent works in a checkout of the pull request's head commit: each repo is cloned once (bare, over SSH with your git credentials) to `~/.cache/codereview-ui/repos/`, and each head commit gets a worktree in `~/.cache/codereview-ui/worktrees/`, removed after 14 days unused.
