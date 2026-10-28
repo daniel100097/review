@@ -73,3 +73,15 @@ test("GitLab filters nested projects and returns normalized list details", async
   expect(result.items[0]).toMatchObject({ number: 7, state: "merged", comments: 3, labels: [{ name: "needs review", color: "#abcdef" }] });
   expect(result.nextPage).toBeUndefined();
 });
+
+test("GitLab fetches every page of a large MR's diffs", async () => {
+  const diff = (i: number) => ({ old_path: `f${i}`, new_path: `f${i}`, diff: "@@ -1 +1 @@\n-a][b\n+a][c\n" });
+  const pages = [Array.from({ length: 100 }, (_, i) => diff(i)), Array.from({ length: 100 }, (_, i) => diff(i + 100)), [diff(200)]];
+  const run = spyOn(cli, "run").mockImplementation(async cmd => {
+    const page = Number(new URL(cmd[4]!, "https://gitlab.example/").searchParams.get("page"));
+    return { stdout: JSON.stringify(pages[page - 1]), stderr: "" };
+  });
+  const files = await gitlab("gitlab.example").getFiles("group/repo", 1);
+  expect(files.map(f => f.newPath)).toEqual(Array.from({ length: 201 }, (_, i) => `f${i}`));
+  expect(run.mock.calls.map(([cmd]) => cmd.includes("--paginate"))).toEqual([false, false, false]);
+});

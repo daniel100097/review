@@ -38,15 +38,23 @@ const pull = (mr: any): PullRequest => ({
 
 /** GitLab via `glab api`. */
 export function gitlab(host: string): Provider {
-  const api = async (path: string, opts: { method?: string; body?: unknown; paginate?: boolean } = {}) => {
+  const api = async (path: string, opts: { method?: string; body?: unknown } = {}) => {
     const cmd = ["glab", "api", "--hostname", host, path];
     if (opts.method) cmd.push("--method", opts.method);
-    if (opts.paginate) cmd.push("--paginate");
     if (opts.body !== undefined) cmd.push("--header", "Content-Type: application/json", "--input", "-");
     const { stdout, stderr } = await run(cmd, opts.body === undefined ? undefined : JSON.stringify(opts.body));
     // Older glab versions exit 0 on HTTP errors and only report them on stderr.
     if (/\(HTTP [45]\d\d\)/.test(stderr)) throw cliError(cmd, stderr);
     return stdout.trim() ? JSON.parse(stdout) : null;
+  };
+  // `glab api --paginate` prints each page as its own JSON array (`[...][...]`), which doesn't parse, so page here.
+  const all = async (path: string) => {
+    const items: any[] = [];
+    for (let page = 1; ; page++) {
+      const batch: any[] = await api(`${path}?per_page=100&page=${page}`);
+      items.push(...batch);
+      if (batch.length < 100) return items;
+    }
   };
   const mr = (repo: string, number: number) => `projects/${encodeURIComponent(repo)}/merge_requests/${number}`;
 
@@ -85,7 +93,7 @@ export function gitlab(host: string): Provider {
     },
 
     async listLabels(repo) {
-      const list: any[] = await api(`projects/${encodeURIComponent(repo)}/labels?per_page=100`, { paginate: true });
+      const list: any[] = await all(`projects/${encodeURIComponent(repo)}/labels`);
       return labels(list);
     },
 
@@ -96,7 +104,7 @@ export function gitlab(host: string): Provider {
     headRef: number => `refs/merge-requests/${number}/head`,
 
     async getFiles(repo, number) {
-      const diffs: any[] = await api(`${mr(repo, number)}/diffs?per_page=100`, { paginate: true });
+      const diffs: any[] = await all(`${mr(repo, number)}/diffs`);
       return diffs.map(
         (d): FileDiff => ({
           oldPath: d.old_path,
@@ -109,7 +117,7 @@ export function gitlab(host: string): Provider {
 
     async getCommits(repo, number) {
       // GitLab doesn't link commits to accounts here; the email identifies the author.
-      const commits: any[] = await api(`${mr(repo, number)}/commits?per_page=100`, { paginate: true });
+      const commits: any[] = await all(`${mr(repo, number)}/commits`);
       return commits.map(c => ({
         sha: c.id,
         authorName: c.author_name,
@@ -119,7 +127,7 @@ export function gitlab(host: string): Provider {
     },
 
     async getComments(repo, number) {
-      const discussions: any[] = await api(`${mr(repo, number)}/discussions?per_page=100`, { paginate: true });
+      const discussions: any[] = await all(`${mr(repo, number)}/discussions`);
       return discussions
         .flatMap(d => d.notes)
         .filter(n => !n.system)
