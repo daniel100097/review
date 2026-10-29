@@ -58,18 +58,27 @@ export type ViewItem = number | { hidden: number; first: number };
  */
 export function withoutCommentChanges(lines: DiffLine[], tokens: Tokens) {
   const commentOnly = commentOnlyLines(lines, tokens);
+  const { view, allHidden } = withoutChanges(lines, commentOnly);
+  return { view, onlyComments: allHidden };
+}
+
+/** Keeps original line indexes and replaces hidden runs with markers, dropping hunks without visible changes. */
+export function withoutChanges(lines: DiffLine[], hidden: boolean[], preserve?: (index: number) => boolean) {
   const view: ViewItem[] = [];
   let hunk: number[] = [];
 
   const flush = () => {
-    const keep = hunk.some(i => isChange(lines[i]!) && !commentOnly[i]);
+    const keep = hunk.some(i => isChange(lines[i]!) && !hidden[i]);
     if (keep) {
       for (const i of hunk) {
         const last = view.at(-1);
-        if (!commentOnly[i]) view.push(i);
+        if (!hidden[i]) view.push(i);
         else if (typeof last === "object") last.hidden++;
         else view.push({ hidden: 1, first: i });
       }
+    } else if (preserve) {
+      // Context explicitly expanded by the reviewer, and controls for expanding more, survive hidden hunks.
+      view.push(...hunk.filter(preserve));
     }
     hunk = [];
   };
@@ -79,5 +88,5 @@ export function withoutCommentChanges(lines: DiffLine[], tokens: Tokens) {
   });
   flush();
 
-  return { view, onlyComments: lines.length > 0 && view.length === 0 };
+  return { view, allHidden: lines.some(isChange) && !lines.some((line, i) => isChange(line) && !hidden[i]) };
 }

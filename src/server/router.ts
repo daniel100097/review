@@ -6,6 +6,7 @@ import { db } from "./db";
 import { hiddenFolders, sources, viewedFiles } from "./db/schema";
 import { askQuestion, cancelAnswer, deleteThread, followUp, listThreads } from "./agents/questions";
 import { cancelWalkthrough, latestWalkthrough, startWalkthrough } from "./agents/walkthroughs";
+import { generateFilterRules } from "./agents/filter-rules";
 import { attributeLines, contributorsOf } from "./git/attribution";
 import { pullRepo } from "./git/checkout";
 import { createProvider, providerKinds, pullSorts, type PullSummary } from "./providers";
@@ -21,6 +22,27 @@ const linePosition = z.object({
 });
 
 export const appRouter = router({
+  filters: router({
+    generate: sourceProcedure
+      .input(pullInput.extend({ request: z.string().trim().min(1).max(4000), agent: z.enum(agentKinds), model: z.string().min(1).max(200) }))
+      .mutation(async ({ ctx, input, signal }) => {
+        const timeout = AbortSignal.timeout(300_000);
+        try {
+          const [pull, files] = await Promise.all([
+            ctx.provider.getPull(input.repo, input.number),
+            ctx.provider.getFiles(input.repo, input.number),
+          ]);
+          return await generateFilterRules({
+            ...input,
+            context: { title: pull.title, body: pull.body, files: files.map(file => ({ ...file, patchHash: Bun.hash(file.patch).toString(36) })) },
+            signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+          });
+        } catch (e) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: timeout.aborted ? "Filter generation timed out. Try again or copy the prompt into your chat." : (e as Error).message });
+        }
+      }),
+  }),
+
   sources: router({
     list: publicProcedure.query(() => db.select().from(sources).orderBy(sources.host).all()),
 
@@ -54,6 +76,11 @@ export const appRouter = router({
     labels: sourceProcedure
       .input(z.object({ repo: z.string().min(1) }))
       .query(({ ctx, input }) => ctx.provider.listLabels(input.repo)),
+
+    /** A file's text at a commit, for expanding unchanged lines around the diff. */
+    file: sourceProcedure
+      .input(z.object({ repo: z.string().min(1), path: z.string().min(1), ref: z.string().min(1) }))
+      .query(({ ctx, input }) => ctx.provider.getFile(input.repo, input.path, input.ref)),
 
     hiddenFolders: sourceProcedure.input(z.object({ repo: z.string().min(1) })).query(({ input }) =>
       db

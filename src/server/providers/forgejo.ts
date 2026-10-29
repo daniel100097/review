@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { run } from "./cli";
 import { splitGitDiff } from "./split-diff";
 import { pullPageSize, type Comment, type Label, type Provider, type PullRequest, type PullSummary, type Repo, type User } from "./types";
@@ -38,19 +41,99 @@ const searchHit = (issue: any): PullSummary => ({
   updatedAt: issue.updated_at,
 });
 
-/** Forgejo (and Gitea) via `fj api`. */
+/** fj stores logins in its platform data directory (forgejo-cli/src/keys.rs). */
+async function readLogins() {
+  const home = os.homedir();
+  const directories = process.platform === "darwin"
+    ? ["forgejo-cli.forgejo-cli", "Cyborus.forgejo-cli"].map(name => path.join(home, "Library/Application Support", name))
+    : process.platform === "win32"
+      ? ["forgejo-cli", "Cyborus"].map(name => path.join(process.env.APPDATA || path.join(home, "AppData/Roaming"), name, "forgejo-cli/data"))
+      : [path.join(process.env.XDG_DATA_HOME && path.isAbsolute(process.env.XDG_DATA_HOME) ? process.env.XDG_DATA_HOME : path.join(home, ".local/share"), "forgejo-cli")];
+  for (const directory of directories) {
+    let text: string;
+    try {
+      text = await readFile(path.join(directory, "keys.json"), "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw new Error("Cannot read fj logins. Check access to forgejo-cli/keys.json.");
+    }
+    // JSON parse errors can quote token contents; never expose the parser's error to the browser.
+    try {
+      const data = JSON.parse(text);
+      if (!data || typeof data.hosts !== "object" || !data.hosts || Array.isArray(data.hosts)) throw new Error();
+      return data as { hosts: Record<string, { type: string; token: string }>; aliases?: Record<string, string> };
+    } catch {
+      throw new Error("Cannot parse fj logins. Check forgejo-cli/keys.json or log in again with fj auth login.");
+    }
+  }
+  throw new Error("No fj logins found. Run fj auth login first.");
+}
+
+async function loginFor(host: string) {
+  let url: URL;
+  try {
+    url = new URL(host.includes("://") ? host : `https://${host}`);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
+  } catch {
+    throw new Error("Use a Forgejo hostname or an HTTP(S) installation URL.");
+  }
+  let logins = await readLogins();
+  const keyOf = (url: URL) => `${url.host}${url.pathname.replace(/\/$/, "")}`;
+  const alias = logins.aliases?.[keyOf(url)];
+  if (typeof alias === "string") url = new URL(`${url.protocol}//${alias}${url.pathname}`);
+  const key = keyOf(url);
+  let login = Object.hasOwn(logins.hosts, key) ? logins.hosts[key] : undefined;
+  if (login?.type === "OAuth") {
+    // Let fj refresh its OAuth token and persist it using its own client ID and expiry format.
+    await run(["fj", "--host", url.href, "whoami"]);
+    logins = await readLogins();
+    login = Object.hasOwn(logins.hosts, key) ? logins.hosts[key] : undefined;
+  }
+  if (!login || !["Application", "OAuth"].includes(login.type) || typeof login.token !== "string" || !login.token.trim()) {
+    throw new Error(`No usable fj login for ${key}. Run fj --host ${url.href} auth login.`);
+  }
+  return { base: url.href.replace(/\/$/, ""), authorization: `${login.type === "OAuth" ? "Bearer" : "token"} ${login.token}` };
+}
+
+/** Forgejo (and Gitea) HTTP API, authenticated with the user's existing fj login. */
 export function forgejo(host: string): Provider {
-  const raw = async (path: string, opts: { method?: string; body?: unknown; paginate?: boolean } = {}) => {
-    const cmd = ["fj", "--host", host, "api", path];
-    if (opts.method) cmd.push("--method", opts.method);
-    if (opts.paginate) cmd.push("--paginate");
-    if (opts.body !== undefined) cmd.push("--input", "-");
-    const { stdout } = await run(cmd, opts.body === undefined ? undefined : JSON.stringify(opts.body));
-    return stdout;
+  let login: ReturnType<typeof loginFor> | undefined;
+  type Options = { method?: string; body?: unknown; paginate?: boolean };
+  const raw = async (endpoint: string, opts: Options = {}) => {
+    const { base, authorization } = await (login ??= loginFor(host));
+    const response = await fetch(`${base}/api/v1${endpoint}`, {
+      method: opts.method ?? "GET",
+      headers: { Authorization: authorization, Accept: "application/json", ...(opts.body !== undefined && { "Content-Type": "application/json" }) },
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      signal: AbortSignal.timeout(30_000),
+      // Never forward credentials to a redirect target.
+      redirect: "manual",
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      const hint = response.status === 401 ? " Log in again with fj auth login."
+        : response.status === 403 ? " Check your account and token permissions." : "";
+      throw new Error(`Forgejo API ${opts.method ?? "GET"} ${endpoint} failed (HTTP ${response.status}).${hint}`);
+    }
+    return response.text();
   };
-  const api = async (...args: Parameters<typeof raw>) => {
-    const out = await raw(...args);
-    return out.trim() ? JSON.parse(out) : null;
+  const api = async (endpoint: string, opts: Options = {}) => {
+    const read = async (endpoint: string) => {
+      const out = await raw(endpoint, opts);
+      return out.trim() ? JSON.parse(out) : null;
+    };
+    if (!opts.paginate) return read(endpoint);
+    const url = new URL(endpoint, "https://forgejo.invalid");
+    url.searchParams.set("limit", "100");
+    const items: any[] = [];
+    for (let page = 1; ; page++) {
+      url.searchParams.set("page", String(page));
+      const batch = await read(`${url.pathname}${url.search}`);
+      if (!Array.isArray(batch)) throw new Error("Forgejo API returned an invalid list.");
+      if (!batch.length) return items;
+      items.push(...batch);
+      // Continue until empty: an instance may cap the requested page size below 100.
+    }
   };
   const pr = (repo: string, number: number) => `/repos/${repo}/pulls/${number}`;
 
@@ -103,6 +186,13 @@ export function forgejo(host: string): Provider {
 
     getFiles: async (repo, number) => splitGitDiff(await raw(`${pr(repo, number)}.diff`)),
 
+    async getFile(repo, path, ref) {
+      const file = await api(`/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+      // The API leaves out the content of files over its blob size limit.
+      if (typeof file.content !== "string") throw new Error(`${path} is too large to load`);
+      return Buffer.from(file.content, "base64").toString();
+    },
+
     async getCommits(repo, number) {
       const commits: any[] = await api(`${pr(repo, number)}/commits?limit=50&files=false&stat=false&verification=false`, {
         paginate: true,
@@ -122,6 +212,7 @@ export function forgejo(host: string): Provider {
         api(`${pr(repo, number)}/reviews`, { paginate: true }),
       ]);
       const reviewComments: any[][] = await Promise.all(
+        // This endpoint returns every review comment and has no pagination parameters.
         reviews.filter(r => r.comments_count > 0).map(r => api(`${pr(repo, number)}/reviews/${r.id}/comments`)),
       );
 

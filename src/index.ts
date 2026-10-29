@@ -10,7 +10,11 @@ const server = serve({
     // Serve index.html for all unmatched routes; client-side routing takes over.
     "/*": index,
 
-    "/trpc/*": req => fetchRequestHandler({ endpoint: "/trpc", req, router: appRouter }),
+    "/trpc/*": (req, server) => {
+      // Generating rules can take longer than Bun's default idle timeout; the procedure has its own deadline.
+      if (new URL(req.url).pathname.slice("/trpc/".length).split(",").includes("filters.generate")) server.timeout(req, 0);
+      return fetchRequestHandler({ endpoint: "/trpc", req, router: appRouter });
+    },
 
     // Tools for running agents, e.g. submitting a walkthrough.
     "/mcp/:token": req => handleMcp(req, req.params.token),

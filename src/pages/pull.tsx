@@ -1,5 +1,6 @@
 import { CommentForm, CommentItem } from "@/components/comment";
 import { DiffList, type File } from "@/components/diff-list";
+import { FilterRulesPanel, useFilterRules } from "@/components/filter-rules";
 import type { QuestionActions, QuestionThread } from "@/components/question-thread";
 import { GroupList, WalkthroughPanel } from "@/components/walkthrough";
 import { ContributorList, type ContributorFilter } from "@/components/contributors";
@@ -9,8 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AgentModel } from "@/lib/agents";
+import type { CompiledFilterRules } from "@/lib/filter-rules";
 import { isInHiddenFolder, isTestOrGenerated } from "@/lib/hidden-files";
-import { commentView, parse } from "@/lib/parsed-file";
+import { changeView, parse } from "@/lib/parsed-file";
 import { routes } from "@/lib/routes";
 import { queryClient, trpc } from "@/lib/trpc";
 import { timeAgo } from "@/lib/utils";
@@ -53,7 +55,10 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   const [tab, setTab] = useState("files");
   const [jumpTo, setJumpTo] = useState<{ path?: string; group?: number; key: number }>();
   const byContributor = useContributorFilter(input);
-  const hiding = useHiddenFiles(sourceId, repo, files.data, byContributor.only);
+  const repositoryFilterKey = `customFilters:${sourceId}:${repo}`;
+  const filterKey = `${repositoryFilterKey}:${number}`;
+  const filters = useFilterRules(filterKey, repositoryFilterKey);
+  const hiding = useHiddenFiles(sourceId, repo, files.data, byContributor.only, filters.compiled);
   const walkthrough = useWalkthrough(input);
   const groups = walkthrough.latest?.result?.groups;
   const [sidebar, setSidebar] = useState<string>(() => localStorage.pullSidebar ?? "groups");
@@ -156,7 +161,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
               <CommentForm onSubmit={body => comment(body)} />
             </TabsContent>
 
-            <TabsContent value="files">
+            <TabsContent value="files" forceMount hidden={tab !== "files"}>
               {files.error ? (
                 <QueryError error={files.error} />
               ) : !files.data ? (
@@ -214,13 +219,14 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
                     </p>
                   </aside>
                   <div className="min-w-0 space-y-4">
+                    <FilterRulesPanel key={filterKey} filters={filters} files={files.data} input={input} pull={pull.data} />
                     <WalkthroughPanel
                       walkthrough={walkthrough.latest}
                       headSha={pull.data.headSha}
                       onStart={walkthrough.start}
                       onCancel={walkthrough.cancel}
                     />
-                    {hiding.visible.length > 0 ? (
+                    {hiding.visible.length > 0 ? tab === "files" && (
                       <DiffList
                         files={ordered}
                         groups={groups && sidebar === "groups" ? groups : undefined}
@@ -232,7 +238,14 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
                         questionActions={questions.actions}
                         jumpTo={jumpTo}
                         hideCommentChanges={hiding.hideComments}
+                        filterRules={filters.compiled}
                         contributor={byContributor.filter}
+                        loadFile={path =>
+                          queryClient.fetchQuery({
+                            ...trpc.repos.file.queryOptions({ sourceId, repo, path, ref: pull.data.headSha }),
+                            staleTime: Infinity,
+                          })
+                        }
                         onViewedChange={(file, viewed) =>
                           setViewed.mutate({ ...input, path: file.newPath, patchHash: file.patchHash, viewed })
                         }
@@ -361,7 +374,7 @@ function useStoredToggle(key: string) {
  * Hides test/generated files and comment-only changes (per-browser toggles) and folders hidden for
  * this repo (stored server-side). Returns the tree for the sidebar and the visible files in tree order.
  */
-function useHiddenFiles(sourceId: number, repo: string, files: File[] | undefined, only?: (file: File) => boolean) {
+function useHiddenFiles(sourceId: number, repo: string, files: File[] | undefined, only?: (file: File) => boolean, rules?: CompiledFilterRules) {
   const [hideTests, toggleTests] = useStoredToggle("hideTestsAndGenerated");
   const [hideComments, toggleComments] = useStoredToggle("hideCommentOnlyChanges");
 
@@ -384,11 +397,12 @@ function useHiddenFiles(sourceId: number, repo: string, files: File[] | undefine
         files?.filter(
           f =>
             !(hideTests && isTestOrGenerated(f)) &&
-            !(hideComments && commentView(parse(f)).onlyComments) &&
+            !rules?.hidesFile(f) &&
+            !changeView(parse(f), hideComments, rules).allHidden &&
             (only?.(f) ?? true),
         ) ?? [],
       ),
-    [files, hideTests, hideComments, only],
+    [files, hideTests, hideComments, only, rules],
   );
   // Memoized: the diff list rebuilds its rows whenever this array changes.
   const visible = useMemo(

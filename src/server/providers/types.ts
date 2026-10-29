@@ -114,6 +114,8 @@ export interface Provider {
   /** The ref the forge keeps at a pull request's head commit, e.g. `refs/pull/1/head`. */
   headRef(number: number): string;
   getFiles(repo: string, number: number): Promise<FileDiff[]>;
+  /** A file's text at a commit, for showing unchanged lines around the diff. */
+  getFile(repo: string, path: string, ref: string): Promise<string>;
   getCommits(repo: string, number: number): Promise<Commit[]>;
   getComments(repo: string, number: number): Promise<Comment[]>;
   addComment(repo: string, number: number, body: string, position?: LinePosition): Promise<void>;

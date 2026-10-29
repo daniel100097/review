@@ -76,71 +76,87 @@ const adapters: Record<AgentKind, { entry: string; env: Record<string, string | 
 
 /** Runs one agent session to completion. Throws on protocol errors; a cancelled run resolves normally. */
 export async function runAgent(run: AgentRun) {
+  if (run.signal?.aborted) return;
   const adapter = adapters[run.agent];
   const executable = run.agent === "claude" ? adapter.env.CLAUDE_CODE_EXECUTABLE : adapter.env.CODEX_PATH;
   if (!executable) throw new Error(`Install ${run.agent} and log in before using its AI features.`);
-  await mkdir(run.cwd, { recursive: true });
-  const command = Bun.isStandaloneExecutable
-    ? [process.execPath, "--acp-agent", run.agent]
-    : [process.execPath, Bun.resolveSync(adapter.entry, import.meta.dir)];
-  const proc = Bun.spawn(command, {
-    cwd: run.cwd,
-    env: { ...process.env, ...adapter.env },
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const stderr = new Response(proc.stderr).text();
-  const stdin = new WritableStream<Uint8Array>({
-    write: chunk => {
-      proc.stdin.write(chunk);
-      proc.stdin.flush();
-    },
-    close: () => {
-      proc.stdin.end();
-    },
-  });
-
-  // Permission requests may only carry the tool call's ID; its title arrived in an earlier update.
-  const titles = new Map<string, string>();
-  const app = client({ name: "codereview-ui" })
-    .onRequest(methods.client.session.requestPermission, ({ params }) =>
-      decide(params, params.toolCall.title ?? titles.get(params.toolCall.toolCallId) ?? "", run),
-    )
-    .onNotification(methods.client.session.update, ({ params: { update } }) => {
-      if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && update.title) {
-        titles.set(update.toolCallId, update.title);
-      }
-      run.onUpdate?.(update);
+  const cancelled = Promise.withResolvers<void>();
+  let cancelSession: (() => Promise<void>) | undefined;
+  const cancel = () => {
+    cancelled.resolve();
+    // Best effort: a stalled or closed connection must not hold up cancellation.
+    void cancelSession?.().catch(() => {});
+  };
+  run.signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    await Promise.race([mkdir(run.cwd, { recursive: true }), cancelled.promise]);
+    if (run.signal?.aborted) return;
+    const command = Bun.isStandaloneExecutable
+      ? [process.execPath, "--acp-agent", run.agent]
+      : [process.execPath, Bun.resolveSync(adapter.entry, import.meta.dir)];
+    const proc = Bun.spawn(command, {
+      cwd: run.cwd,
+      env: { ...process.env, ...adapter.env },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = new Response(proc.stderr).text().catch(() => "");
+    const stdin = new WritableStream<Uint8Array>({
+      write: chunk => {
+        proc.stdin.write(chunk);
+        proc.stdin.flush();
+      },
+      close: () => {
+        proc.stdin.end();
+      },
     });
 
-  try {
-    await app.connectWith(ndJsonStream(stdin, proc.stdout), async agent => {
-      await agent.request(methods.agent.initialize, {
-        protocolVersion: PROTOCOL_VERSION,
-        // No client-side file access or terminals: the agent only reads what its own tools allow.
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-        clientInfo: { name: "codereview-ui", version: "0.1.0" },
+    // Permission requests may only carry the tool call's ID; its title arrived in an earlier update.
+    const titles = new Map<string, string>();
+    const app = client({ name: "codereview-ui" })
+      .onRequest(methods.client.session.requestPermission, ({ params }) =>
+        decide(params, params.toolCall.title ?? titles.get(params.toolCall.toolCallId) ?? "", run),
+      )
+      .onNotification(methods.client.session.update, ({ params: { update } }) => {
+        if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && update.title) {
+          titles.set(update.toolCallId, update.title);
+        }
+        run.onUpdate?.(update);
       });
-      const setup: NewSessionRequest = { cwd: run.cwd, mcpServers: run.mcpServers ?? [], _meta: adapter.meta?.(run) ?? null };
-      const resumedSession = run.resume
-        ? await agent.request(methods.agent.session.resume, { ...setup, sessionId: run.resume }).then(
-            response => ({ ...response, sessionId: run.resume! }),
-            error => void console.warn(`agent: couldn't resume ${run.agent} session ${run.resume}: ${error?.message ?? error}`),
-          )
-        : undefined;
-      const resumed = Boolean(resumedSession);
-      const session = resumedSession ?? (await agent.request(methods.agent.session.new, setup));
-      const { sessionId } = session;
-      run.onSession?.(sessionId);
-      for (const [configId, value] of Object.entries(run.config ?? {})) {
-        assertOption(session.configOptions ?? [], configId, value);
-        await agent.request(methods.agent.session.setConfigOption, { sessionId, configId, value });
-      }
 
-      const cancel = () => agent.notify(methods.agent.session.cancel, { sessionId });
-      run.signal?.addEventListener("abort", cancel, { once: true });
-      try {
+    try {
+      const running = app.connectWith(ndJsonStream(stdin, proc.stdout), async agent => {
+        await agent.request(methods.agent.initialize, {
+          protocolVersion: PROTOCOL_VERSION,
+          // No client-side file access or terminals: the agent only reads what its own tools allow.
+          clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+          clientInfo: { name: "codereview-ui", version: "0.1.0" },
+        });
+        if (run.signal?.aborted) return;
+        const setup: NewSessionRequest = { cwd: run.cwd, mcpServers: run.mcpServers ?? [], _meta: adapter.meta?.(run) ?? null };
+        const resumedSession = run.resume
+          ? await agent.request(methods.agent.session.resume, { ...setup, sessionId: run.resume }).then(
+              response => ({ ...response, sessionId: run.resume! }),
+              error => {
+                if (!run.signal?.aborted) console.warn(`agent: couldn't resume ${run.agent} session ${run.resume}: ${error?.message ?? error}`);
+              },
+            )
+          : undefined;
+        if (run.signal?.aborted) return;
+        const resumed = Boolean(resumedSession);
+        const session = resumedSession ?? (await agent.request(methods.agent.session.new, setup));
+        if (run.signal?.aborted) return;
+        const { sessionId } = session;
+        cancelSession = () => agent.notify(methods.agent.session.cancel, { sessionId });
+        run.onSession?.(sessionId);
+        for (const [configId, value] of Object.entries(run.config ?? {})) {
+          if (run.signal?.aborted) return;
+          assertOption(session.configOptions ?? [], configId, value);
+          await agent.request(methods.agent.session.setConfigOption, { sessionId, configId, value });
+        }
+
+        if (run.signal?.aborted) return;
         await run.prompts(
           async text => {
             if (run.signal?.aborted) return "cancelled";
@@ -152,21 +168,29 @@ export async function runAgent(run: AgentRun) {
           },
           { resumed },
         );
+      });
+      await Promise.race([running, cancelled.promise]);
+    } catch (error) {
+      if (run.signal?.aborted) return;
+      // ACP errors put the reason in `data.details`, e.g. "Internal error" with "Codex did not return any models".
+      const details = (error as { data?: { details?: unknown } }).data?.details;
+      const message = [error instanceof Error ? error.message : String(error), typeof details === "string" && details]
+        .filter(Boolean)
+        .join(": ");
+      const log = (await Promise.race([stderr, Bun.sleep(500).then(() => "")])).trim();
+      if (run.signal?.aborted) return;
+      throw new Error(`${run.agent}: ${message}${log ? `\n${log.slice(-2000)}` : ""}`, { cause: error });
+    } finally {
+      proc.kill();
+      const forceKill = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+      try {
+        await proc.exited;
       } finally {
-        run.signal?.removeEventListener("abort", cancel);
+        clearTimeout(forceKill);
       }
-    });
-  } catch (error) {
-    // ACP errors put the reason in `data.details`, e.g. "Internal error" with "Codex did not return any models".
-    const details = (error as { data?: { details?: unknown } }).data?.details;
-    const message = [error instanceof Error ? error.message : String(error), typeof details === "string" && details]
-      .filter(Boolean)
-      .join(": ");
-    const log = (await Promise.race([stderr, Bun.sleep(500).then(() => "")])).trim();
-    throw new Error(`${run.agent}: ${message}${log ? `\n${log.slice(-2000)}` : ""}`, { cause: error });
+    }
   } finally {
-    proc.kill();
-    await Promise.race([proc.exited, Bun.sleep(5_000).then(() => proc.kill("SIGKILL"))]);
+    run.signal?.removeEventListener("abort", cancel);
   }
 }
 

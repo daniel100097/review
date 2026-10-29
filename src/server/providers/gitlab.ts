@@ -115,6 +115,11 @@ export function gitlab(host: string): Provider {
       );
     },
 
+    async getFile(repo, path, ref) {
+      const file = await api(`projects/${encodeURIComponent(repo)}/repository/files/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`);
+      return Buffer.from(file.content, "base64").toString();
+    },
+
     async getCommits(repo, number) {
       // GitLab doesn't link commits to accounts here; the email identifies the author.
       const commits: any[] = await all(`${mr(repo, number)}/commits`);

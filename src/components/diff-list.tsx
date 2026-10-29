@@ -8,12 +8,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { DiffLine } from "@/lib/diff";
 import type { AgentModel } from "@/lib/agents";
 import type { ViewItem } from "@/lib/comment-changes";
+import { expandStep, type Gap, type LineRange } from "@/lib/expand";
+import type { CompiledFilterRules } from "@/lib/filter-rules";
 import { highlightCss } from "@/lib/highlight";
-import { commentView, parse, tokensFor, type File, type ParsedFile } from "@/lib/parsed-file";
+import { changeView, expanded, parse, tokensFor, type Expansion, type File, type ParsedFile } from "@/lib/parsed-file";
 import { cn } from "@/lib/utils";
 import type { LinePosition } from "@/server/providers/types";
 import { defaultRangeExtractor, useWindowVirtualizer, type Range } from "@tanstack/react-virtual";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, UnfoldVertical, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 export type { File };
@@ -28,8 +30,16 @@ type Row = { key: string } & (
   /** Starts a walkthrough group; `group` is undefined for files the walkthrough doesn't mention. */
   | { kind: "group"; index: number; count: number; group?: WalkthroughGroup }
   | { kind: "header"; parsed: ParsedFile; collapsed: boolean; closed: boolean }
-  /** `by`: another contributor's change, when showing one contributor's. */
-  | { kind: "line"; parsed: ParsedFile; index: number; selected: boolean; by?: string; last: boolean }
+  /** `by`: another contributor's change, when showing one contributor's. `expander`: on hunk headers hiding lines. */
+  | {
+      kind: "line";
+      parsed: ParsedFile;
+      index: number;
+      selected: boolean;
+      by?: string;
+      expander?: { gap: Gap; loading: boolean; error?: string };
+      last: boolean;
+    }
   | {
       kind: "thread";
       parsed: ParsedFile;
@@ -40,12 +50,12 @@ type Row = { key: string } & (
       last: boolean;
     }
   | { kind: "note"; parsed: ParsedFile; large: boolean; last: boolean }
-  | { kind: "hiddenComments"; parsed: ParsedFile; count: number; last: boolean }
+  | { kind: "hiddenComments"; parsed: ParsedFile; count: number; custom: boolean; last: boolean }
   | { kind: "outdated"; parsed: ParsedFile; comments: Comment[]; questions: QuestionThread[]; last: boolean }
 );
 
-/** Selected lines `from`..`to` (indexes into the file's lines); the form opens below `to`. */
-type Composer = { path: string; from: number; to: number };
+/** Selected lines `from`..`to`; the form opens below `to`. Positions, as expanding a diff shifts indexes. */
+type Composer = { path: string; from: LinePosition; to: LinePosition };
 
 const estimatedHeight: Record<Row["kind"], number> = {
   gap: 16,
@@ -62,15 +72,25 @@ const isAt = (line: DiffLine, p: LinePosition) =>
   line.kind !== "hunk" &&
   (p.newLine !== undefined ? line.newLine === p.newLine : line.newLine === undefined && line.oldLine === p.oldLine);
 
+const indexOf = (parsed: ParsedFile, p: LinePosition) => parsed.lines.findIndex(l => isAt(l, p));
+
+/** Identifies a line of a file across expansions, which shift indexes. */
+const lineKey = (lines: DiffLine[], index: number) => {
+  const line = lines[index]!;
+  return line.kind === "hunk" ? `@${index}` : `${line.oldLine ?? ""}:${line.newLine ?? ""}`;
+};
+
 function buildRows(
   parsedFiles: ParsedFile[],
   comments: Comment[],
   questions: QuestionThread[],
   isCollapsed: (parsed: ParsedFile) => boolean,
+  expansionOf: (parsed: ParsedFile) => Expansion | undefined,
   composer: Composer | null,
   hideCommentChanges: boolean,
   groups: WalkthroughGroup[] | undefined,
   contributor: ContributorFilter | undefined,
+  filterRules: CompiledFilterRules | undefined,
 ) {
   const rows: Row[] = [];
   const headerIndex = new Map<string, number>();
@@ -78,10 +98,12 @@ function buildRows(
   const groupOf = new Map(groups?.flatMap((g, i) => g.files.map(path => [path, i] as const)));
   let currentGroup: number | undefined;
 
-  parsedFiles.forEach((parsed, fileIndex) => {
+  parsedFiles.forEach((base, fileIndex) => {
+    const collapsed = isCollapsed(base);
+    const expansion = expansionOf(base);
+    const parsed = collapsed ? base : expanded(base, expansion);
     const { file, lines } = parsed;
     const path = file.newPath;
-    const collapsed = isCollapsed(parsed);
     if (fileIndex > 0) rows.push({ kind: "gap", key: `gap:${path}` });
     if (groups) {
       const index = groupOf.get(path) ?? groups.length;
@@ -108,7 +130,11 @@ function buildRows(
         if (line.kind === "add") return authors?.added.get(line.newLine!);
         if (line.kind === "del") return authors?.deleted.get(line.oldLine!);
       };
-      let view = hideCommentChanges ? commentView(parsed).view : lines.map((_, i) => i);
+      const filtered = changeView(parsed, hideCommentChanges, filterRules);
+      let view = filtered.view;
+      if (filtered.hiddenCount > 0 && filtered.hiddenCount === parsed.additions + parsed.deletions) {
+        body.push({ kind: "hiddenComments", key: `hiddenComments:${path}:all`, parsed, count: filtered.hiddenCount, custom: Boolean(filterRules), last: false });
+      }
       // Lines nobody could be credited with count as the contributor's, so nothing of theirs gets hidden.
       if (contributor) view = hunksWith(view, lines, i => (authorOf(i)?.key ?? contributor.key) === contributor.key);
       const shown = new Set(view.filter(item => typeof item === "number"));
@@ -128,22 +154,25 @@ function buildRows(
         if (!shown.has(i)) outdatedQuestions.push(q);
         else questionsByLine.set(i, [...(questionsByLine.get(i) ?? []), q]);
       }
-      const selecting = composer?.path === path ? composer : undefined;
+      const selecting =
+        composer?.path === path ? { from: indexOf(parsed, composer.from), to: indexOf(parsed, composer.to) } : undefined;
       view.forEach(index => {
         if (typeof index === "object") {
           const key = `hiddenComments:${path}:${index.first}`;
-          body.push({ kind: "hiddenComments", key, parsed, count: index.hidden, last: false });
+          body.push({ kind: "hiddenComments", key, parsed, count: index.hidden, custom: Boolean(filterRules), last: false });
           return;
         }
         const selected = selecting !== undefined && index >= selecting.from && index <= selecting.to;
         const author = authorOf(index);
         const by = contributor && author && author.key !== contributor.key ? author.name : undefined;
-        body.push({ kind: "line", key: `line:${path}:${index}`, parsed, index, selected, by, last: false });
+        const gap = parsed.gaps?.get(index);
+        const expander = gap && { gap, loading: Boolean(expansion && !expansion.content && !expansion.error), error: expansion?.error };
+        body.push({ kind: "line", key: `line:${path}:${lineKey(lines, index)}`, parsed, index, selected, by, expander, last: false });
         const composing = selecting?.to === index;
         if (byLine.has(index) || questionsByLine.has(index) || composing) {
           body.push({
             kind: "thread",
-            key: `thread:${path}:${index}`,
+            key: `thread:${path}:${lineKey(lines, index)}`,
             parsed,
             index,
             comments: byLine.get(index) ?? [],
@@ -186,6 +215,7 @@ export function DiffList({
   questions,
   headSha,
   onViewedChange,
+  loadFile,
   onComment,
   onAsk,
   questionActions,
@@ -193,6 +223,7 @@ export function DiffList({
   jumpTo,
   hideCommentChanges,
   contributor,
+  filterRules,
 }: {
   files: File[];
   /** Inline comments. */
@@ -202,6 +233,8 @@ export function DiffList({
   /** The pull request's current head, to mark questions asked on earlier pushes. */
   headSha: string;
   onViewedChange: (file: File, viewed: boolean) => void;
+  /** The text of a file at the pull request's head, for expanding unchanged lines. */
+  loadFile: (path: string) => Promise<string>;
   onComment: (body: string, position: LinePosition) => Promise<unknown>;
   /** `excerpt` is the selected lines as text: old and new line numbers, +/-, code. */
   onAsk: (question: string, model: AgentModel, position: LinePosition, excerpt: string) => Promise<unknown>;
@@ -215,12 +248,16 @@ export function DiffList({
   hideCommentChanges: boolean;
   /** Shows one contributor's changes: hunks without any are left out and others' changes dimmed. */
   contributor?: ContributorFilter;
+  filterRules?: CompiledFilterRules;
 }) {
   const parsedFiles = useMemo(() => files.map(parse), [files]);
   const [collapsedOverrides, setCollapsedOverrides] = useState(() => new Map<string, boolean>());
   const setCollapsed = (path: string, collapsed: boolean) =>
     setCollapsedOverrides(prev => new Map(prev).set(path, collapsed));
   const [composer, setComposer] = useState<Composer | null>(null);
+  // By patch, so a push that changes a file's diff starts it unexpanded.
+  const [expansions, setExpansions] = useState(() => new Map<string, Expansion>());
+  const expansionKey = (file: File) => `${file.newPath}:${file.patchHash}`;
 
   const { rows, headerIndex, headerIndexes, groupIndex } = useMemo(
     () =>
@@ -229,19 +266,24 @@ export function DiffList({
         comments,
         questions,
         p => collapsedOverrides.get(p.file.newPath) ?? (p.file.viewed || p.lines.length > largeDiffLines),
+        p => expansions.get(expansionKey(p.file)),
         composer,
         hideCommentChanges,
         groups,
         contributor,
+        filterRules,
       ),
-    [parsedFiles, comments, questions, collapsedOverrides, composer, hideCommentChanges, groups, contributor],
+    [parsedFiles, comments, questions, collapsedOverrides, expansions, composer, hideCommentChanges, groups, contributor, filterRules],
   );
   const maxLine = useMemo(() => {
     let max = 1;
-    for (const { lines } of parsedFiles) for (const l of lines) max = Math.max(max, l.oldLine ?? 0, l.newLine ?? 0);
+    const see = (l: DiffLine) => (max = Math.max(max, l.oldLine ?? 0, l.newLine ?? 0));
+    for (const { lines } of parsedFiles) lines.forEach(see);
+    // Expanded lines can go past the diff's.
+    for (const row of rows) if (row.kind === "line") see(row.parsed.lines[row.index]!);
     return max;
-  }, [parsedFiles]);
-  const composerRow = composer ? rows.findIndex(r => r.key === `thread:${composer.path}:${composer.to}`) : -1;
+  }, [parsedFiles, rows]);
+  const composerRow = rows.findIndex(r => r.kind === "thread" && r.composing);
 
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -376,11 +418,12 @@ export function DiffList({
     },
     startComment: (parsed, index, extend) => {
       const path = parsed.file.newPath;
-      setComposer(prev =>
-        extend && prev?.path === path
-          ? { path, from: Math.min(prev.from, index), to: Math.max(prev.to, index) }
-          : { path, from: index, to: index },
-      );
+      setComposer(prev => {
+        const [from, to] = extend && prev?.path === path ? [indexOf(parsed, prev.from), indexOf(parsed, prev.to)] : [index, index];
+        // The earlier selection can be gone, like after a push.
+        if (from === -1 || to === -1) return { path, from: positionOf(parsed, index), to: positionOf(parsed, index) };
+        return { path, from: positionOf(parsed, Math.min(from, index)), to: positionOf(parsed, Math.max(to, index)) };
+      });
     },
     cancelComment: () => setComposer(null),
     submitComment: async (parsed, index, body) => {
@@ -388,11 +431,24 @@ export function DiffList({
       setComposer(null);
     },
     ask: async (parsed, index, question, model) => {
-      const from = composer?.path === parsed.file.newPath ? composer.from : index;
+      const from = composer?.path === parsed.file.newPath ? indexOf(parsed, composer.from) : index;
       await onAsk(question, model, positionOf(parsed, index), excerptOf(parsed, from, index));
       setComposer(null);
     },
-    selectedLines: () => (composer ? composer.to - composer.from + 1 : 1),
+    selectedLines: parsed => (composer ? indexOf(parsed, composer.to) - indexOf(parsed, composer.from) + 1 : 1),
+    expand: (parsed, range) => {
+      const key = expansionKey(parsed.file);
+      const current = expansions.get(key);
+      const update = (change: (expansion: Expansion) => Expansion) =>
+        setExpansions(prev => new Map(prev).set(key, change(prev.get(key) ?? { revealed: [] })));
+      update(e => ({ ...e, revealed: [...e.revealed, range], error: undefined }));
+      // Load the file the first time, or again after it failed.
+      if (current && current.error === undefined) return;
+      loadFile(parsed.file.newPath).then(
+        text => update(e => ({ ...e, content: text.replace(/\n$/, "").split("\n") })),
+        (error: Error) => update(e => ({ ...e, error: error.message })),
+      );
+    },
     questionActions,
     headSha,
   };
@@ -448,7 +504,9 @@ interface RowViewProps {
     cancelComment: () => void;
     submitComment: (parsed: ParsedFile, index: number, body: string) => Promise<void>;
     ask: (parsed: ParsedFile, index: number, question: string, model: AgentModel) => Promise<void>;
-    selectedLines: () => number;
+    selectedLines: (parsed: ParsedFile) => number;
+    /** Shows the unchanged lines `range` (new-side numbers) of the file. */
+    expand: (parsed: ParsedFile, range: LineRange) => void;
     questionActions: QuestionActions;
     headSha: string;
   };
@@ -542,20 +600,26 @@ function RowView({ row, actions }: RowViewProps) {
           )}
           title={row.by && `Changed by ${row.by}`}
         >
-          <span className="px-2 text-right text-muted-foreground select-none">{line.oldLine}</span>
-          <span className="px-2 text-right text-muted-foreground select-none">{line.newLine}</span>
-          <span className="select-none">
-            {line.kind !== "hunk" && (
-              <button
-                type="button"
-                title="Ask or comment about this line (shift-click to select a range)"
-                onClick={e => actions.startComment(row.parsed, row.index, e.shiftKey)}
-                className="invisible mt-0.5 flex size-4 items-center justify-center rounded bg-primary text-primary-foreground group-hover:visible"
-              >
-                <Plus className="size-3" />
-              </button>
-            )}
-          </span>
+          {row.expander ? (
+            <Expander parsed={row.parsed} gap={row.expander.gap} loading={row.expander.loading} expand={actions.expand} />
+          ) : (
+            <>
+              <span className="px-2 text-right text-muted-foreground select-none">{line.oldLine}</span>
+              <span className="px-2 text-right text-muted-foreground select-none">{line.newLine}</span>
+              <span className="select-none">
+                {line.kind !== "hunk" && (
+                  <button
+                    type="button"
+                    title="Ask or comment about this line (shift-click to select a range)"
+                    onClick={e => actions.startComment(row.parsed, row.index, e.shiftKey)}
+                    className="invisible mt-0.5 flex size-4 items-center justify-center rounded bg-primary text-primary-foreground group-hover:visible"
+                  >
+                    <Plus className="size-3" />
+                  </button>
+                )}
+              </span>
+            </>
+          )}
           <span className="-indent-3 pr-4 pl-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
             <span className="inline-block w-3 indent-0 text-muted-foreground select-none">{marker[line.kind]}</span>
             {tokens
@@ -569,6 +633,9 @@ function RowView({ row, actions }: RowViewProps) {
                   ),
                 )
               : line.content}
+            {row.expander?.error && (
+              <span className="ml-2 text-red-600 dark:text-red-400">Couldn't load the file: {row.expander.error}</span>
+            )}
           </span>
         </div>
       );
@@ -590,7 +657,7 @@ function RowView({ row, actions }: RowViewProps) {
           ))}
           {row.composing && (
             <LineComposer
-              lineCount={actions.selectedLines()}
+              lineCount={actions.selectedLines(row.parsed)}
               onCancel={actions.cancelComment}
               onAsk={(question, model) => actions.ask(row.parsed, row.index, question, model)}
               onComment={body => actions.submitComment(row.parsed, row.index, body)}
@@ -617,7 +684,7 @@ function RowView({ row, actions }: RowViewProps) {
     case "hiddenComments":
       return (
         <div className={cn("bg-muted/50 px-3 font-mono text-xs leading-5 text-muted-foreground", fileBody(row.last))}>
-          ⋯ {row.count} comment-only {row.count === 1 ? "line" : "lines"} hidden
+          ⋯ {row.count} {row.custom ? "filtered" : "comment-only"} {row.count === 1 ? "line" : "lines"} hidden
         </div>
       );
 
@@ -644,4 +711,47 @@ function RowView({ row, actions }: RowViewProps) {
         </div>
       );
   }
+}
+
+/** Buttons on a hunk header that show the unchanged lines hidden there, like GitLab's. */
+function Expander({
+  parsed,
+  gap,
+  loading,
+  expand,
+}: {
+  parsed: ParsedFile;
+  gap: Gap;
+  loading: boolean;
+  expand: RowViewProps["actions"]["expand"];
+}) {
+  const hidden = gap.to === undefined ? undefined : gap.to - gap.from + 1;
+  const buttons: [LineRange, string, LucideIcon][] = [];
+  if (hidden === undefined || hidden > expandStep) {
+    // Down from the hunk above, up from the hunk below.
+    if (gap.edge !== "top") buttons.push([[gap.from, gap.from + expandStep - 1], `Expand down ${expandStep} lines`, ChevronDown]);
+    if (gap.edge !== "bottom") buttons.push([[gap.to! - expandStep + 1, gap.to!], `Expand up ${expandStep} lines`, ChevronUp]);
+  }
+  buttons.push([
+    [gap.from, gap.to ?? Infinity],
+    hidden === undefined ? "Expand to the end of the file" : `Expand all ${hidden} lines`,
+    UnfoldVertical,
+  ]);
+  return (
+    <span className={cn("col-span-3 flex items-center justify-end gap-0.5 px-1 select-none", loading && "animate-pulse")}>
+      {buttons.map(([range, label, Icon]) => (
+        <button
+          key={label}
+          type="button"
+          title={label}
+          aria-label={label}
+          disabled={loading}
+          onClick={() => expand(parsed, range)}
+          className="rounded p-0.5 text-muted-foreground hover:bg-blue-500/20 hover:text-foreground"
+        >
+          <Icon className="size-3.5" />
+        </button>
+      ))}
+    </span>
+  );
 }

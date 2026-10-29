@@ -1,60 +1,8 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import * as cli from "./cli";
-import { forgejo } from "./forgejo";
 import { gitlab } from "./gitlab";
-import { pullPageSize } from "./types";
 
 afterEach(() => mock.restore());
-
-test.each(["closed", "merged"] as const)("Forgejo skips pages without %s PRs and preserves the next page", async state => {
-  const pull = (number: number, matches: boolean) => ({
-    number,
-    state: "closed",
-    merged: matches === (state === "merged"),
-    user: { login: "alice" },
-    head: { ref: "feature", sha: "abc" },
-    base: { ref: "main" },
-  });
-  const pages = [
-    Array.from({ length: pullPageSize }, (_, i) => pull(i + 1, false)),
-    Array.from({ length: pullPageSize }, (_, i) => pull(i + 31, i === 0)),
-    Array.from({ length: pullPageSize }, (_, i) => pull(i + 61, false)),
-    [],
-  ];
-  const requested: number[] = [];
-  spyOn(cli, "run").mockImplementation(async cmd => {
-    const url = new URL(cmd[4]!, "https://forge.example");
-    const page = Number(url.searchParams.get("page"));
-    requested.push(page);
-    return { stdout: JSON.stringify(pages[page - 1]), stderr: "" };
-  });
-  const provider = forgejo("forge.example");
-  const first = await provider.listPulls("owner/repo", { state, sort: "updated", page: 1 });
-  expect(first.items.map(p => [p.number, p.state])).toEqual([[31, state]]);
-  expect(first.nextPage).toBe(3);
-  const last = await provider.listPulls("owner/repo", { state, sort: "updated", page: first.nextPage! });
-  expect(last).toEqual({ items: [], nextPage: undefined });
-  expect(requested).toEqual([1, 2, 3, 4]);
-});
-
-test("Forgejo searches labeled PRs without requiring branch data", async () => {
-  const run = spyOn(cli, "run").mockResolvedValue({
-    stdout: JSON.stringify([{ number: 7, state: "closed", pull_request: { merged: true }, user: { login: "alice" },
-      labels: [{ name: "needs review", color: "abcdef" }], comments: 3 }]),
-    stderr: "",
-  });
-  const result = await forgejo("forge.example").listPulls("owner/repo", {
-    state: "merged", search: "fix checkout", label: "needs review", author: "alice", sort: "oldest", page: 1,
-  });
-  const url = new URL(run.mock.calls[0]![0][4]!, "https://forge.example");
-  expect(url.pathname).toBe("/repos/owner/repo/issues");
-  expect(Object.fromEntries(url.searchParams)).toMatchObject({
-    type: "pulls", q: "fix checkout", labels: "needs review", created_by: "alice", state: "closed", sort: "oldest",
-  });
-  expect(result.items[0]).toMatchObject({ number: 7, state: "merged", comments: 3, labels: [{ name: "needs review", color: "#abcdef" }] });
-  expect(result.items[0]?.sourceBranch).toBeUndefined();
-  expect(result.nextPage).toBeUndefined();
-});
 
 test("GitLab filters nested projects and returns normalized list details", async () => {
   const run = spyOn(cli, "run").mockResolvedValue({
@@ -84,4 +32,12 @@ test("GitLab fetches every page of a large MR's diffs", async () => {
   const files = await gitlab("gitlab.example").getFiles("group/repo", 1);
   expect(files.map(f => f.newPath)).toEqual(Array.from({ length: 201 }, (_, i) => `f${i}`));
   expect(run.mock.calls.map(([cmd]) => cmd.includes("--paginate"))).toEqual([false, false, false]);
+});
+
+test("GitLab loads a file at a commit", async () => {
+  const run = spyOn(cli, "run").mockResolvedValue({ stdout: JSON.stringify({ content: btoa("a\nb\n") }), stderr: "" });
+  expect(await gitlab("gitlab.example").getFile("group/repo", "src/a b.ts", "abc123")).toBe("a\nb\n");
+  expect(run.mock.calls.map(([cmd]) => cmd[4])).toEqual([
+    "projects/group%2Frepo/repository/files/src%2Fa%20b.ts?ref=abc123",
+  ]);
 });

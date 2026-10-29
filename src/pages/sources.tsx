@@ -40,8 +40,8 @@ export function SourcesPage() {
           <CardHeader>
             <CardTitle>Add a source</CardTitle>
             <CardDescription>
-              Data is fetched through the forge's CLI, so log in there first (<code>glab auth login</code> or{" "}
-              <code>fj auth login</code>).
+              Uses your existing forge login. Log in first with <code>glab auth login</code> or{" "}
+              <code>fj auth login</code>.
             </CardDescription>
           </CardHeader>
           <CardContent>
