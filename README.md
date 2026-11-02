@@ -88,6 +88,18 @@ When more than one person committed to a pull request, the Files tab lists them 
 
 Commits are grouped by email (the same person often commits under several names) and named after their forge account where the forge knows the email; people who only merged aren't listed. Lines are credited with `git blame` over base..head in the local clone (see below; cloned the first time). Deleted lines go to the commit after the last one that had them, or, when that's a merge, to the one author whose commits removed that content; lines that can't be credited count as everyone's.
 
+## Review filters
+
+On phones and tablets, **Files & filters** opens a drawer for file navigation and review controls. Selecting a file closes the drawer and jumps to its diff. On phones, tap a line number to ask or comment. **Wrap lines** switches between wrapping and horizontal scrolling; the preference is remembered in your browser. Desktop layouts retain the sidebar and keyboard shortcuts.
+
+**Ctrl+F** (or **Cmd+F**) searches code and filenames across the complete filtered diff, including collapsed files. **Enter** finds the next match, **Shift+Enter** the previous one, and **Escape** closes search. The magnifying-glass button opens the same search on touchscreens. Matches are highlighted and scrolled into view even when their rows were not mounted.
+
+All review filters live in the URL. Opening a PR link without filter parameters starts unfiltered, regardless of older browser settings or hidden folders saved for the repository. **Reset filters** clears them together. Copy the full URL to preserve the view, including its custom rules; browser Back and Forward restore previous filter choices.
+
+The query parameters are `hideTests=1`, `hideCommentChanges=1`, `hideReviewComments=1`, `by=<contributor>`, and repeated `hideFolder=<path>` entries. Full custom rules live in the URL fragment as `#rules=<JSON>` (plus `rulesPaused=1` when paused), so large rule sets do not exceed HTTP request URL limits. No saved rule ID or browser storage is needed to open the link elsewhere.
+
+Folders affected by any filter appear in amber with a hidden-file count, including parents of hidden subfolders. Filtered folders stay in the tree so you can see which parts of the change are excluded.
+
 ## AI agents
 
 Agents run the installed `claude` or `codex` CLI with its existing login, through the [ACP](https://agentclientprotocol.com) adapters `@agentclientprotocol/claude-agent-acp` and `@agentclientprotocol/codex-acp`, as plain subprocesses. Claude gets read tools (Read, Grep, Glob, and a read-only `git` tool on our MCP server), and Codex runs in its read-only mode. `read-only-command.ts` approves permission requests for commands that only read. Agents call back into the server through per-run MCP tools served at `/mcp/<run token>`.
@@ -96,7 +108,7 @@ Agents run the installed `claude` or `codex` CLI with its existing login, throug
 
 Open **Custom filters** above the diff in the Files tab. Describe what matters to you, for example “Show behavior changes; hide changes that only wrap the same values in a requestBody object.” **Generate** gives the AI this pull request's description and diff. It proposes exact changes to hide, with reasons. **Copy prompt for chat** includes the diff so you can ask another chat and paste its returned JSON into **Rules**. Review the proposed exclusions and file/line counts, then select **Apply rules**.
 
-Filters are saved per pull request in your browser; existing repository rules are inherited until you save filters for that PR. **Pause filters** restores changes hidden by custom rules, and **Clear rules** clears the PR's filters. Other review filters still apply. Exact selections are tied to a file's patch hash and both sides of a change block: edits to that patch stop those selections from matching. Uncertain changes and blocks omitted from the bounded AI context remain visible.
+Applied rules are included in the URL. **Pause filters** restores changes hidden by custom rules, and **Clear rules** removes those rules from the URL. Other review filters still apply. Exact selections are tied to a file's patch hash and both sides of a change block: edits to that patch stop those selections from matching. Uncertain changes and blocks omitted from the bounded AI context remain visible.
 
 Reusable text rules are also supported, with case-sensitive path and line globs and no executable code. A path-only rule hides matching files. Line rules hide a consecutive block only when every removed and added line matches that same rule, preserving mixed replacements. When both fields are present, both must match. Paths match the new path relative to the repository root: `*` stays within a directory, `**` crosses directories, and `**/` also matches root files. Line patterns match the full trimmed content; `*` matches any text and `?` one character.
 
@@ -112,7 +124,7 @@ Reusable text rules are also supported, with case-sensitive path and line globs 
 
 ### Questions about diff lines
 
-Use **Hide comments** in the review page header to hide pull request comments in both the conversation and the diff, including comments on outdated lines. **Show comments** restores them. The preference is remembered in your browser.
+Use **Hide comments** in the review page header to hide pull request comments in both the conversation and the diff, including comments on outdated lines. **Show comments** restores them. The choice is included in the URL.
 
 Click a line's **+** (shift-click another to select a range), type a question and press **Ask** (Ctrl+Enter); **Comment** posts to the forge instead. The answer streams into a thread under the line, with follow-ups that continue the same agent session. Threads are stored locally and marked "earlier push" once the pull request moves on; the agent keeps answering about the commit it was asked on.
 

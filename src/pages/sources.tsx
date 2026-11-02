@@ -46,14 +46,14 @@ export function SourcesPage() {
           </CardHeader>
           <CardContent>
             <form
-              className="flex gap-2"
+              className="flex flex-col gap-2 sm:flex-row"
               onSubmit={e => {
                 e.preventDefault();
                 add.mutate({ kind, host });
               }}
             >
               <Select value={kind} onValueChange={v => setKind(v as ProviderKind)}>
-                <SelectTrigger className="w-44">
+                <SelectTrigger className="w-full sm:w-44 sm:shrink-0">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -69,7 +69,7 @@ export function SourcesPage() {
                 {add.isPending ? "Checking…" : "Add"}
               </Button>
             </form>
-            {add.error && <p className="mt-2 text-sm text-destructive">{add.error.message}</p>}
+            {add.error && <p className="mt-2 text-sm text-destructive [overflow-wrap:anywhere]">{add.error.message}</p>}
           </CardContent>
         </Card>
 
@@ -82,12 +82,14 @@ export function SourcesPage() {
         ) : (
           <ul className="divide-y rounded-lg border">
             {sources.data.map(source => (
-              <li key={source.id} className="flex items-center gap-3 px-4 py-3">
+              <li key={source.id} className="flex items-start gap-3 px-4 py-3 sm:items-center">
                 <Badge variant="secondary">{source.kind}</Badge>
-                <Link href={routes.source(source.id)} className="font-medium hover:underline">
-                  {source.host}
-                </Link>
-                <span className="text-sm text-muted-foreground">@{source.username}</span>
+                <div className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere] sm:flex-row sm:items-center sm:gap-3">
+                  <Link href={routes.source(source.id)} className="min-w-0 font-medium hover:underline">
+                    {source.host}
+                  </Link>
+                  <span className="min-w-0 text-sm text-muted-foreground">@{source.username}</span>
+                </div>
                 <Button
                   variant="ghost"
                   size="icon-sm"

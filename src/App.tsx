@@ -27,7 +27,7 @@ export function App() {
 function RepoRoute({ sourceId, path }: { sourceId: number; path: string }) {
   const pull = path.match(/^(.+)\/-\/pulls\/(\d+)$/);
   return pull ? (
-    <PullPage sourceId={sourceId} repo={pull[1]!} number={Number(pull[2])} />
+    <PullPage key={`${sourceId}:${pull[1]}:${pull[2]}`} sourceId={sourceId} repo={pull[1]!} number={Number(pull[2])} />
   ) : (
     <PullsPage sourceId={sourceId} repo={path} />
   );

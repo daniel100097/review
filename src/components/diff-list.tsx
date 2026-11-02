@@ -4,19 +4,22 @@ import { Markdown } from "@/components/markdown";
 import { LineComposer, QuestionThreadView, type QuestionActions, type QuestionThread } from "@/components/question-thread";
 import { riskBadge, type WalkthroughGroup } from "@/components/walkthrough";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import type { DiffLine } from "@/lib/diff";
 import type { AgentModel } from "@/lib/agents";
 import type { ViewItem } from "@/lib/comment-changes";
 import { expandStep, type Gap, type LineRange } from "@/lib/expand";
 import type { CompiledFilterRules } from "@/lib/filter-rules";
-import { highlightCss } from "@/lib/highlight";
+import { findText } from "@/lib/find-text";
+import { highlightCss, type HighlightToken } from "@/lib/highlight";
 import { changeView, expanded, parse, tokensFor, type Expansion, type File, type ParsedFile } from "@/lib/parsed-file";
 import { cn } from "@/lib/utils";
 import type { LinePosition } from "@/server/providers/types";
 import { defaultRangeExtractor, useWindowVirtualizer, type Range } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronUp, Plus, UnfoldVertical, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { ChevronDown, ChevronUp, Plus, Search, UnfoldVertical, X, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 export type { File };
 
@@ -56,6 +59,8 @@ type Row = { key: string } & (
 
 /** Selected lines `from`..`to`; the form opens below `to`. Positions, as expanding a diff shifts indexes. */
 type Composer = { path: string; from: LinePosition; to: LinePosition };
+type FindMatch = { rowKey: string; path: string; start: number; end: number };
+type FindState = { query: string; current?: FindMatch };
 
 const estimatedHeight: Record<Row["kind"], number> = {
   gap: 16,
@@ -224,6 +229,8 @@ export function DiffList({
   hideCommentChanges,
   contributor,
   filterRules,
+  wrapLines,
+  onOpenFind,
 }: {
   files: File[];
   /** Inline comments. */
@@ -249,6 +256,8 @@ export function DiffList({
   /** Shows one contributor's changes: hunks without any are left out and others' changes dimmed. */
   contributor?: ContributorFilter;
   filterRules?: CompiledFilterRules;
+  wrapLines: boolean;
+  onOpenFind?: () => void;
 }) {
   const parsedFiles = useMemo(() => files.map(parse), [files]);
   const [collapsedOverrides, setCollapsedOverrides] = useState(() => new Map<string, boolean>());
@@ -258,6 +267,34 @@ export function DiffList({
   // By patch, so a push that changes a file's diff starts it unexpanded.
   const [expansions, setExpansions] = useState(() => new Map<string, Expansion>());
   const expansionKey = (file: File) => `${file.newPath}:${file.patchHash}`;
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const findInput = useRef<HTMLInputElement>(null);
+  const previousFindFocus = useRef<HTMLElement | null>(null);
+
+  // Search the complete view, including collapsed files, without mounting its rows.
+  const searchableRows = useMemo(() => findOpen ? buildRows(
+    parsedFiles, [], [], () => false, p => expansions.get(expansionKey(p.file)), null,
+    hideCommentChanges, groups, contributor, filterRules,
+  ).rows : [], [findOpen, parsedFiles, expansions, hideCommentChanges, groups, contributor, filterRules]);
+  const findMatches = useMemo(() => searchableRows.flatMap(row => {
+    if (row.kind !== "line" && row.kind !== "header") return [];
+    const text = row.kind === "header"
+      ? row.parsed.file.status === "renamed" ? `${row.parsed.file.oldPath} → ${row.parsed.file.newPath}` : row.parsed.file.newPath
+      : row.parsed.lines[row.index]!.content;
+    return findText(text, findQuery).map(range => ({ ...range, rowKey: row.key, path: row.parsed.file.newPath }));
+  }), [searchableRows, findQuery]);
+  const selectedFindIndex = findMatches.length ? (findIndex % findMatches.length + findMatches.length) % findMatches.length : 0;
+  const currentFind = findMatches[selectedFindIndex];
+  const find: FindState | undefined = findOpen ? { query: findQuery, current: currentFind } : undefined;
+  const moveFind = (direction: number) => { if (findMatches.length) setFindIndex(index => index + direction); };
+  const openFind = () => {
+    if (!findOpen) previousFindFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    onOpenFind?.();
+    setFindOpen(true);
+    requestAnimationFrame(() => { findInput.current?.focus(); findInput.current?.select(); });
+  };
 
   const { rows, headerIndex, headerIndexes, groupIndex } = useMemo(
     () =>
@@ -284,12 +321,22 @@ export function DiffList({
     return max;
   }, [parsedFiles, rows]);
   const composerRow = rows.findIndex(r => r.kind === "thread" && r.composing);
+  const findRow = useMemo(() => currentFind ? rows.findIndex(row => row.key === currentFind.rowKey) : -1, [rows, currentFind]);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const horizontalRef = useRef<HTMLDivElement>(null);
+  const [horizontalWidth, setHorizontalWidth] = useState(0);
   const [scrollMargin, setScrollMargin] = useState(0);
   // Content above the list (like the walkthrough panel) can change height, so measure after every render too.
   const measure = () => setScrollMargin(listRef.current!.getBoundingClientRect().top + window.scrollY);
   useLayoutEffect(measure);
+  useLayoutEffect(() => {
+    if (!wrapLines && horizontalRef.current) {
+      // Keep the selected column when a wide virtual row scrolls out of view.
+      const width = horizontalRef.current.scrollWidth;
+      setHorizontalWidth(previous => Math.max(previous, width));
+    }
+  });
   useEffect(() => {
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
@@ -298,7 +345,8 @@ export function DiffList({
   const virtualizer = useWindowVirtualizer({
     count: rows.length,
     estimateSize: useCallback((i: number) => estimatedHeight[rows[i]!.kind], [rows]),
-    getItemKey: useCallback((i: number) => rows[i]!.key, [rows]),
+    // Each wrapping mode needs its own row measurements.
+    getItemKey: useCallback((i: number) => rows[i]!.kind === "line" ? `${rows[i]!.key}:${wrapLines}` : rows[i]!.key, [rows, wrapLines]),
     overscan: 30,
     scrollMargin,
     scrollPaddingStart: appHeaderHeight,
@@ -313,9 +361,10 @@ export function DiffList({
         const header = headerIndexes.findLast(i => i <= range.startIndex);
         if (header !== undefined) indexes.add(header);
         if (composerRow !== -1) indexes.add(composerRow);
+        if (findRow !== -1) indexes.add(findRow);
         return [...indexes].sort((a, b) => a - b);
       },
-      [headerIndexes, composerRow],
+      [headerIndexes, composerRow, findRow],
     ),
   });
 
@@ -324,19 +373,40 @@ export function DiffList({
    * at a few lines), so the first scroll can land off; correct it for a few frames once they render.
    */
   const jumping = useRef<number>(undefined);
-  const scrollToRow = (index: number) => {
+  const jumpSequence = useRef(0);
+  const scrollToRow = (index: number, finding = false) => {
+    const sequence = ++jumpSequence.current;
     jumping.current = index;
     // Newly rendered rows are measured a frame or two later, so wait a little after the last correction.
     const start = performance.now();
     let lastCorrection = start;
     const correct = () => {
-      if (jumping.current !== index) return;
+      if (jumping.current !== index || jumpSequence.current !== sequence) return;
       const now = performance.now();
+      if (now - start > 1500) {
+        jumping.current = undefined;
+        return;
+      }
       const [offset] = virtualizer.getOffsetForIndex(index, "start") ?? [];
-      if (offset !== undefined && Math.abs(window.scrollY - offset) > 1) {
-        window.scrollTo({ top: offset });
+      const mark = finding && rows[index]?.kind === "line"
+        ? listRef.current?.querySelector<HTMLElement>('[data-find-current="true"]') : undefined;
+      const target = mark ? window.scrollY + mark.getBoundingClientRect().top - 120
+        : offset === undefined ? undefined : offset - (finding ? 72 : 0);
+      if (mark && horizontalRef.current) {
+        const bounds = mark.getBoundingClientRect();
+        const viewport = horizontalRef.current.getBoundingClientRect();
+        if (bounds.left < viewport.left || bounds.right > viewport.right) {
+          horizontalRef.current.scrollLeft += bounds.width > viewport.width - 16
+            ? bounds.left - viewport.left - 8
+            : bounds.left - viewport.left - viewport.width / 2 + bounds.width / 2;
+        }
+      }
+      const maximum = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      const boundedTarget = target === undefined ? undefined : Math.min(maximum, Math.max(0, target));
+      if (boundedTarget !== undefined && Math.abs(window.scrollY - boundedTarget) > 1) {
+        window.scrollTo({ top: boundedTarget });
         lastCorrection = now;
-      } else if (offset === undefined || now - lastCorrection > 200 || now - start > 1500) {
+      } else if (offset === undefined || now - lastCorrection > 200) {
         jumping.current = undefined;
         return;
       }
@@ -344,6 +414,24 @@ export function DiffList({
     };
     correct();
   };
+  const closeFind = () => {
+    jumpSequence.current++;
+    jumping.current = undefined;
+    setFindOpen(false);
+    const previous = previousFindFocus.current;
+    (previous?.isConnected && previous.getClientRects().length ? previous : horizontalRef.current)?.focus({ preventScroll: true });
+  };
+
+  useEffect(() => {
+    jumpSequence.current++;
+    jumping.current = undefined;
+    if (!currentFind) return;
+    if (findRow === -1) {
+      setCollapsed(currentFind.path, false);
+      return;
+    }
+    scrollToRow(findRow, true);
+  }, [currentFind, findRow, findIndex]);
 
   // Jumps come from the page (file tree, groups) and from shortcuts; the latest wins.
   const [jump, setJump] = useState<Jump>();
@@ -396,12 +484,25 @@ export function DiffList({
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLElement && e.target.closest("input, textarea, select, [contenteditable]");
-      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey) shortcuts.current!(e);
+      const inDialog = e.target instanceof HTMLElement && e.target.closest("[role=dialog]");
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && !e.altKey) {
+        e.preventDefault();
+        openFind();
+        return;
+      }
+      if (e.key === "Escape" && findOpen && !inDialog) {
+        e.preventDefault();
+        closeFind();
+        return;
+      }
+      const ownsKeyboard = e.target instanceof HTMLElement && e.target.closest(
+        "input, textarea, select, [contenteditable], [role=dialog], [role=combobox], [role=listbox], [role=menu]",
+      );
+      if (!e.defaultPrevented && !ownsKeyboard && !e.ctrlKey && !e.metaKey && !e.altKey) shortcuts.current!(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [findOpen, onOpenFind]);
 
   const items = virtualizer.getVirtualItems();
   const stickyLine = (virtualizer.scrollOffset ?? 0) + appHeaderHeight;
@@ -458,22 +559,56 @@ export function DiffList({
       <style href="tanstack-highlight-theme" precedence="default">
         {highlightCss}
       </style>
+      {findOpen ? (
+        <form role="search" aria-label="Find in diff" className="fixed top-14 right-2 z-20 flex w-[min(26rem,calc(100vw-1rem))] items-center gap-1 rounded-lg border bg-background p-2 shadow-lg"
+          onSubmit={e => { e.preventDefault(); moveFind(1); }}>
+          <Input ref={findInput} aria-label="Find code or filename" placeholder="Find in diff…" value={findQuery}
+            className="h-8 min-w-0 flex-1"
+            onChange={e => { setFindQuery(e.target.value); setFindIndex(0); }}
+            onKeyDown={e => { if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); moveFind(-1); } }} />
+          <span role="status" aria-live="polite" className="shrink-0 px-1 text-xs text-muted-foreground">
+            {findMatches.length ? `${selectedFindIndex + 1}/${findMatches.length}` : "0/0"}
+          </span>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!findMatches.length} onClick={() => moveFind(-1)}><ChevronUp /></Button>
+          <Button type="submit" variant="ghost" size="icon-sm" aria-label="Next match" title="Next match (Enter)" disabled={!findMatches.length}><ChevronDown /></Button>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Close find" title="Close (Escape)" onClick={closeFind}><X /></Button>
+        </form>
+      ) : (
+        <Button variant="outline" size="icon" aria-label="Find in diff" title="Find in diff (Ctrl+F)" onClick={openFind}
+          className="fixed right-15 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 size-10 shadow-lg lg:right-4"><Search /></Button>
+      )}
       <div
         ref={listRef}
         className="relative"
-        style={{ height: virtualizer.getTotalSize(), "--num": `calc(${String(maxLine).length}ch + 1rem)` } as CSSProperties}
+        style={{ height: virtualizer.getTotalSize(), "--digits": `${String(maxLine).length}ch` } as CSSProperties}
       >
-        {items.map(item => (
+        {sticky && (
           <div
-            key={item.key}
-            data-index={item.index}
+            key={sticky.key}
+            data-index={sticky.index}
             ref={virtualizer.measureElement}
-            className={item === sticky ? "sticky top-12 z-10" : "absolute top-0 left-0 w-full"}
-            style={item === sticky ? undefined : { transform: `translateY(${item.start - scrollMargin}px)` }}
+            className="sticky top-12 z-10"
           >
-            <RowView row={rows[item.index]!} actions={view} />
+            <RowView row={rows[sticky.index]!} actions={view} wrapLines={wrapLines} find={find} />
           </div>
-        ))}
+        )}
+        <div ref={horizontalRef} role="region" aria-label="Code diff" tabIndex={0} className={cn("absolute inset-0", !wrapLines && "overflow-x-auto")}>
+          {!wrapLines && <div aria-hidden="true" className="pointer-events-none absolute top-0 h-px" style={{ width: horizontalWidth }} />}
+          {items.filter(item => item !== sticky).map(item => (
+            <div
+              key={item.key}
+              data-index={item.index}
+              ref={virtualizer.measureElement}
+              className="absolute top-0 left-0 w-full"
+              style={{
+                transform: `translateY(${item.start - scrollMargin}px)`,
+                width: !wrapLines && rows[item.index]!.kind === "line" ? horizontalWidth || undefined : undefined,
+              }}
+            >
+              <RowView row={rows[item.index]!} actions={view} wrapLines={wrapLines} find={find} />
+            </div>
+          ))}
+        </div>
       </div>
     </>
   );
@@ -496,6 +631,8 @@ type Jump = { path?: string; group?: number; key: number };
 
 interface RowViewProps {
   row: Row;
+  wrapLines: boolean;
+  find?: FindState;
   actions: {
     setCollapsed: (parsed: ParsedFile, collapsed: boolean) => void;
     setViewed: (parsed: ParsedFile, viewed: boolean) => void;
@@ -523,7 +660,40 @@ const marker: Record<DiffLine["kind"], string> = { hunk: "", add: "+", del: "-",
 /** Rows of one file share side borders; the last one closes the card. */
 const fileBody = (last: boolean) => cn("border-x", last && "rounded-b-lg border-b");
 
-function RowView({ row, actions }: RowViewProps) {
+/** Split highlights at syntax-token boundaries while retaining matches that cross them. */
+function FoundText({ text, tokens, rowKey, find }: {
+  text: string;
+  tokens?: HighlightToken[];
+  rowKey: string;
+  find?: FindState;
+}) {
+  const ranges = find?.query ? findText(text, find.query) : [];
+  let offset = 0;
+  let rangeIndex = 0;
+  return (tokens ?? [{ value: text }]).map((token, tokenIndex) => {
+    const from = offset;
+    offset += token.value.length;
+    while (ranges[rangeIndex] && ranges[rangeIndex]!.end <= from) rangeIndex++;
+    const parts: ReactNode[] = [];
+    let cursor = from;
+    for (let i = rangeIndex; ranges[i] && ranges[i]!.start < offset; i++) {
+      const range = ranges[i]!;
+      const start = Math.max(from, range.start);
+      const end = Math.min(offset, range.end);
+      if (start > cursor) parts.push(token.value.slice(cursor - from, start - from));
+      const current = find?.current?.rowKey === rowKey && find.current.start === range.start;
+      parts.push(<mark key={range.start} data-find-current={current ? "true" : undefined}
+        className={current ? "rounded-sm bg-orange-400 text-black outline outline-1 outline-orange-600" : "rounded-sm bg-yellow-200 text-black dark:bg-yellow-400"}>
+        {token.value.slice(start - from, end - from)}
+      </mark>);
+      cursor = end;
+    }
+    if (cursor < offset) parts.push(token.value.slice(cursor - from));
+    return <span key={tokenIndex} className={token.className ? `th-${token.className}` : undefined}>{parts}</span>;
+  });
+}
+
+function RowView({ row, actions, wrapLines, find }: RowViewProps) {
   switch (row.kind) {
     case "gap":
       return <div className="h-4" />;
@@ -535,7 +705,7 @@ function RowView({ row, actions }: RowViewProps) {
             <span className="text-xs text-muted-foreground">
               {row.group ? `Group ${row.index + 1} of ${row.count}` : "Not in the walkthrough"}
             </span>
-            <span className="font-semibold">{row.group?.title ?? "Other changes"}</span>
+            <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{row.group?.title ?? "Other changes"}</span>
             {row.group && (
               <>
                 <Badge variant="outline" className={riskBadge[row.group.risk]}>
@@ -561,7 +731,7 @@ function RowView({ row, actions }: RowViewProps) {
       return (
         <div
           className={cn(
-            "flex items-center gap-2 rounded-t-lg border bg-muted px-3 py-2 text-sm",
+            "flex min-w-0 items-center gap-1.5 rounded-t-lg border bg-muted px-2 py-2 text-sm sm:gap-2 sm:px-3",
             row.closed && "rounded-b-lg",
           )}
         >
@@ -569,18 +739,19 @@ function RowView({ row, actions }: RowViewProps) {
             type="button"
             onClick={() => actions.setCollapsed(row.parsed, !row.collapsed)}
             aria-label={row.collapsed ? "Expand" : "Collapse"}
+            className="flex size-8 shrink-0 items-center justify-center rounded focus-visible:outline-2 sm:size-4"
           >
             <ChevronDown className={cn("size-4 transition-transform", row.collapsed && "-rotate-90")} />
           </button>
-          <span className="truncate font-mono text-xs">
-            {file.status === "renamed" ? `${file.oldPath} → ${file.newPath}` : file.newPath}
+          <span className={cn("min-w-0 flex-1 font-mono text-xs", find?.current?.rowKey === row.key ? "[overflow-wrap:anywhere]" : "truncate")} title={file.status === "renamed" ? `${file.oldPath} → ${file.newPath}` : file.newPath}>
+            <FoundText text={file.status === "renamed" ? `${file.oldPath} → ${file.newPath}` : file.newPath} rowKey={row.key} find={find} />
           </span>
           {file.status !== "modified" && <Badge variant="outline">{file.status}</Badge>}
           <span className="text-xs text-green-600 dark:text-green-400">+{additions}</span>
           <span className="text-xs text-red-600 dark:text-red-400">−{deletions}</span>
           <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 text-xs">
-            <Checkbox checked={file.viewed} onCheckedChange={checked => actions.setViewed(row.parsed, checked === true)} />
-            Viewed
+            <Checkbox className="size-5 sm:size-4" checked={file.viewed} onCheckedChange={checked => actions.setViewed(row.parsed, checked === true)} />
+            <span className="sr-only sm:not-sr-only">Viewed</span>
           </label>
         </div>
       );
@@ -592,7 +763,8 @@ function RowView({ row, actions }: RowViewProps) {
       return (
         <div
           className={cn(
-            "group grid grid-cols-[var(--num)_var(--num)_1.25rem_minmax(0,1fr)] font-mono text-xs leading-5",
+            "group grid grid-cols-[var(--num)_minmax(0,1fr)] font-mono text-xs leading-6 [--num:calc(var(--digits)_+_0.5rem)] sm:grid-cols-[var(--num)_var(--num)_1.25rem_minmax(0,1fr)] sm:leading-5 sm:[--num:calc(var(--digits)_+_1rem)]",
+            row.expander && "max-sm:grid-cols-[auto_minmax(0,1fr)]",
             lineTint[line.kind],
             row.selected && "shadow-[inset_3px_0_0_var(--color-violet-500)] brightness-95 dark:brightness-125",
             row.by && "opacity-40",
@@ -604,15 +776,27 @@ function RowView({ row, actions }: RowViewProps) {
             <Expander parsed={row.parsed} gap={row.expander.gap} loading={row.expander.loading} expand={actions.expand} />
           ) : (
             <>
-              <span className="px-2 text-right text-muted-foreground select-none">{line.oldLine}</span>
-              <span className="px-2 text-right text-muted-foreground select-none">{line.newLine}</span>
-              <span className="select-none">
+              <span className="hidden px-2 text-right text-muted-foreground select-none sm:block">{line.oldLine}</span>
+              <span className="px-1 text-right text-muted-foreground select-none sm:px-2">
+                {line.kind !== "hunk" && (
+                  <button
+                    type="button"
+                    aria-label={`Ask or comment on line ${line.newLine ?? line.oldLine}`}
+                    onClick={e => actions.startComment(row.parsed, row.index, e.shiftKey)}
+                    className="min-h-6 w-full rounded text-right hover:bg-primary hover:text-primary-foreground focus-visible:outline-2 sm:hidden"
+                  >
+                    {line.newLine ?? line.oldLine}
+                  </button>
+                )}
+                <span className="hidden sm:inline">{line.newLine}</span>
+              </span>
+              <span className="hidden select-none sm:block">
                 {line.kind !== "hunk" && (
                   <button
                     type="button"
                     title="Ask or comment about this line (shift-click to select a range)"
                     onClick={e => actions.startComment(row.parsed, row.index, e.shiftKey)}
-                    className="invisible mt-0.5 flex size-4 items-center justify-center rounded bg-primary text-primary-foreground group-hover:visible"
+                    className="invisible mt-0.5 flex size-4 items-center justify-center rounded bg-primary text-primary-foreground focus-visible:visible group-hover:visible [@media(hover:none)]:visible"
                   >
                     <Plus className="size-3" />
                   </button>
@@ -620,19 +804,9 @@ function RowView({ row, actions }: RowViewProps) {
               </span>
             </>
           )}
-          <span className="-indent-3 pr-4 pl-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
+          <span className={cn("-indent-3 pr-1 pl-3 sm:pr-4", wrapLines ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "min-w-max whitespace-pre")}>
             <span className="inline-block w-3 indent-0 text-muted-foreground select-none">{marker[line.kind]}</span>
-            {tokens
-              ? tokens.map((t, i) =>
-                  t.className ? (
-                    <span key={i} className={`th-${t.className}`}>
-                      {t.value}
-                    </span>
-                  ) : (
-                    t.value
-                  ),
-                )
-              : line.content}
+            <FoundText text={line.content} tokens={tokens} rowKey={row.key} find={find} />
             {row.expander?.error && (
               <span className="ml-2 text-red-600 dark:text-red-400">Couldn't load the file: {row.expander.error}</span>
             )}
@@ -738,7 +912,7 @@ function Expander({
     UnfoldVertical,
   ]);
   return (
-    <span className={cn("col-span-3 flex items-center justify-end gap-0.5 px-1 select-none", loading && "animate-pulse")}>
+    <span className={cn("flex items-center justify-end gap-0.5 px-1 select-none sm:col-span-3", loading && "animate-pulse")}>
       {buttons.map(([range, label, Icon]) => (
         <button
           key={label}
@@ -747,7 +921,7 @@ function Expander({
           aria-label={label}
           disabled={loading}
           onClick={() => expand(parsed, range)}
-          className="rounded p-0.5 text-muted-foreground hover:bg-blue-500/20 hover:text-foreground"
+          className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground hover:bg-blue-500/20 hover:text-foreground sm:size-auto"
         >
           <Icon className="size-3.5" />
         </button>

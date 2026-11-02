@@ -34,7 +34,7 @@ export function useAgentModel(storageKey: string, fallback: AgentModel["model"])
 export function ModelPicker({ value, onChange }: { value: AgentModel; onChange: (m: AgentModel) => void }) {
   return (
     <Select value={modelKey(value)} onValueChange={key => onChange(agentModels.find(m => modelKey(m) === key)!)}>
-      <SelectTrigger size="sm" className="w-44" aria-label="Model">
+      <SelectTrigger size="sm" className="w-44 max-w-full min-w-0" aria-label="Model">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -91,13 +91,14 @@ export function LineComposer({
 
   return (
     <form
-      className="space-y-2 font-sans"
+      className="min-w-0 space-y-2 font-sans [overflow-wrap:anywhere]"
       onSubmit={e => {
         e.preventDefault();
         submit("ask");
       }}
     >
       <Textarea
+        className="min-h-24 min-w-0 resize-y"
         value={body}
         onChange={e => setBody(e.target.value)}
         placeholder={`Ask about ${lineCount === 1 ? "this line" : `these ${lineCount} lines`}, or write a comment. Shift-click another line's + to select a range.`}
@@ -113,7 +114,7 @@ export function LineComposer({
         <Button type="submit" size="sm" disabled={Boolean(pending) || !body.trim()} title="Ask (Ctrl+Enter). Stays local.">
           <Sparkles /> {pending === "ask" ? "Asking…" : "Ask"}
         </Button>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
@@ -148,7 +149,7 @@ export function QuestionThreadView({
 }) {
   const running = thread.messages.some(m => m.status === "running");
   return (
-    <div className="flex gap-3 font-sans">
+    <div className="flex min-w-0 gap-3 font-sans [overflow-wrap:anywhere]">
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400">
         <Sparkles className="size-4" />
       </div>
@@ -172,7 +173,7 @@ export function QuestionThreadView({
           </button>
         </div>
         {showExcerpt && (
-          <pre className="overflow-x-auto border-b bg-muted/50 px-3 py-1.5 font-mono text-xs">{thread.excerpt}</pre>
+          <pre className="max-w-full overflow-x-auto border-b bg-muted/50 px-3 py-1.5 font-mono text-xs whitespace-pre [overflow-wrap:normal]">{thread.excerpt}</pre>
         )}
         <div className="space-y-3 px-3 py-2">
           {thread.messages.map((m, i) =>
@@ -237,7 +238,7 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
   };
   return (
     <form
-      className="flex items-start gap-2 border-t px-3 py-2"
+      className="flex flex-wrap items-start gap-2 border-t px-3 py-2"
       onSubmit={e => {
         e.preventDefault();
         submit();
@@ -248,7 +249,7 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
         onChange={e => setBody(e.target.value)}
         placeholder="Ask a follow-up"
         rows={1}
-        className={cn("min-h-8 resize-none py-1.5 text-sm", body.includes("\n") && "resize-y")}
+        className={cn("min-h-16 min-w-0 resize-none py-2 text-base sm:flex-1 md:min-h-8 md:py-1.5 md:text-sm", body.includes("\n") && "resize-y")}
         onKeyDown={e => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -256,10 +257,10 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
           }
         }}
       />
-      <Button type="submit" size="sm" variant="secondary" disabled={pending || !body.trim()}>
+      <Button type="submit" size="sm" variant="secondary" className="ml-auto" disabled={pending || !body.trim()}>
         Ask
       </Button>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="w-full text-sm text-destructive">{error}</p>}
     </form>
   );
 }

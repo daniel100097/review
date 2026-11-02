@@ -30,7 +30,7 @@ export function WalkthroughPanel({
 }) {
   const [model, setModel] = useAgentModel("walkthroughModel", "haiku");
   const start = (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <ModelPicker value={model} onChange={setModel} />
       <Button size="sm" variant={walkthrough ? "outline" : "default"} onClick={() => onStart(model)}>
         {walkthrough ? <RotateCw /> : <Sparkles />}
@@ -41,19 +41,19 @@ export function WalkthroughPanel({
 
   if (!walkthrough) {
     return (
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed px-4 py-3 text-sm">
-        <Sparkles className="size-4 text-violet-500" />
-        <span className="text-muted-foreground">Group the changes by purpose, with summaries, risk and a reading order.</span>
-        <div className="ml-auto">{start}</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-dashed px-4 py-3 text-sm [overflow-wrap:anywhere]">
+        <Sparkles className="size-4 shrink-0 text-violet-500" />
+        <span className="min-w-0 flex-1 text-muted-foreground">Group the changes by purpose, with summaries, risk and a reading order.</span>
+        <div className="w-full min-w-0 sm:ml-auto sm:w-auto">{start}</div>
       </div>
     );
   }
 
   const stale = walkthrough.headSha !== headSha;
   return (
-    <div className="space-y-2 rounded-lg border border-violet-500/30 px-4 py-3 text-sm">
+    <div className="min-w-0 space-y-2 rounded-lg border border-violet-500/30 px-4 py-3 text-sm [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Sparkles className="size-4 text-violet-500" />
+        <Sparkles className="size-4 shrink-0 text-violet-500" />
         <span className="font-medium text-foreground">Walkthrough</span>
         <span>
           {modelLabel(walkthrough.agent, walkthrough.model)} · {timeAgo(new Date(walkthrough.createdAt).toISOString())}
@@ -63,12 +63,12 @@ export function WalkthroughPanel({
             earlier push
           </Badge>
         )}
-        {walkthrough.status !== "running" && <div className="ml-auto">{start}</div>}
+        {walkthrough.status !== "running" && <div className="w-full min-w-0 sm:ml-auto sm:w-auto">{start}</div>}
       </div>
       {walkthrough.status === "running" && (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" />
-          <span>{walkthrough.activity ?? "Working"}…</span>
+        <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+          <LoaderCircle className="size-4 shrink-0 animate-spin" />
+          <span className="min-w-0 flex-1">{walkthrough.activity ?? "Working"}…</span>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={() => onCancel(walkthrough.id)}>
             <Square /> Stop
           </Button>
@@ -107,7 +107,7 @@ export function GroupList({
               className="flex w-full items-start gap-2 rounded px-1 py-0.5 text-left hover:bg-muted"
             >
               <span className="w-4 shrink-0 text-right text-xs leading-5 text-muted-foreground">{i + 1}</span>
-              <span className="min-w-0 flex-1 font-medium">{group.title}</span>
+              <span className="min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">{group.title}</span>
               {shown.length > 0 && viewed === shown.length ? (
                 <CircleCheck className="mt-0.5 size-4 shrink-0 text-green-600" />
               ) : (

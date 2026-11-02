@@ -8,7 +8,7 @@ export type Comment = RouterOutputs["pulls"]["comments"][number];
 
 export function CommentItem({ comment, context }: { comment: Comment; context?: ReactNode }) {
   return (
-    <div className="flex gap-3">
+    <div className="flex min-w-0 gap-3 [overflow-wrap:anywhere]">
       {comment.author.avatarUrl && <img src={comment.author.avatarUrl} alt="" className="size-7 shrink-0 rounded-full" />}
       <div className="min-w-0 flex-1 rounded-md border bg-card">
         <div className="flex flex-wrap items-center gap-x-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
@@ -16,7 +16,7 @@ export function CommentItem({ comment, context }: { comment: Comment; context?: 
           <span>{timeAgo(comment.createdAt)}</span>
           {context}
         </div>
-        <div className="px-3 py-2 text-sm break-words whitespace-pre-wrap">{comment.body}</div>
+        <div className="px-3 py-2 text-sm whitespace-pre-wrap">{comment.body}</div>
       </div>
     </div>
   );
@@ -52,13 +52,14 @@ export function CommentForm({
 
   return (
     <form
-      className="space-y-2 font-sans"
+      className="min-w-0 space-y-2 font-sans [overflow-wrap:anywhere]"
       onSubmit={e => {
         e.preventDefault();
         submit();
       }}
     >
       <Textarea
+        className="min-h-24 min-w-0 resize-y"
         value={body}
         onChange={e => setBody(e.target.value)}
         placeholder={placeholder}
@@ -69,7 +70,7 @@ export function CommentForm({
         }}
       />
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         {onCancel && (
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
             Cancel

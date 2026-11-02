@@ -104,7 +104,7 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
     <Page crumbs={[{ label: source?.host ?? "…", href: routes.source(sourceId) }, { label: repo }]}>
       <div className="mx-auto max-w-6xl space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-64 flex-1">
+          <div className="relative min-w-0 flex-1 basis-full sm:min-w-64 sm:basis-0">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={searchRef}
@@ -119,8 +119,8 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
               /
             </kbd>
           </div>
-          <Tabs value={filters.state} onValueChange={state => setFilters({ state: state === "open" ? "" : state })}>
-            <TabsList>
+          <Tabs className="w-full sm:w-auto" value={filters.state} onValueChange={state => setFilters({ state: state === "open" ? "" : state })}>
+            <TabsList className="w-full sm:w-fit">
               {states.map(state => (
                 <TabsTrigger key={state} value={state} className="capitalize">
                   {state}
@@ -137,7 +137,7 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
             onChange={e => setFilters({ author: e.target.value.trim() }, true)}
             placeholder="Author"
             aria-label="Author"
-            className="h-8 w-44"
+            className="h-8 flex-1 sm:w-44 sm:flex-none"
           />
           <datalist id="pull-authors">
             {authors.map(author => (
@@ -155,21 +155,21 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
             </Button>
           )}
           <Select value={filters.label || anyLabel} onValueChange={v => setFilters({ label: v === anyLabel ? "" : v })}>
-            <SelectTrigger size="sm" className="w-48" aria-label="Label">
-              <SelectValue />
+            <SelectTrigger size="sm" className="w-full min-w-0 sm:w-48" aria-label="Label">
+              <SelectValue className="min-w-0" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-w-[calc(100vw-2rem)]">
               <SelectItem value={anyLabel}>Any label</SelectItem>
               {labels.data?.map(label => (
-                <SelectItem key={label.name} value={label.name}>
+                <SelectItem key={label.name} value={label.name} className="[&>span:last-child]:min-w-0">
                   <LabelDot color={label.color} />
-                  {label.name}
+                  <span className="truncate">{label.name}</span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Select value={filters.sort} onValueChange={sort => setFilters({ sort: sort === "updated" ? "" : sort })}>
-            <SelectTrigger size="sm" className="w-44" aria-label="Sort">
+            <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Sort">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -209,20 +209,20 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
           <ul className={cn("divide-y rounded-lg border transition-opacity", pulls.isPlaceholderData && "opacity-60")}>
             {items.map(pull => (
               <li key={pull.number}>
-                <Link href={routes.pull(sourceId, repo, pull.number)} className="flex gap-3 px-4 py-3 hover:bg-muted/50">
+                <Link href={routes.pull(sourceId, repo, pull.number)} className="flex flex-col gap-2 px-4 py-3 hover:bg-muted/50 sm:flex-row sm:gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className={stateBadge[pull.state]}>{pull.state}</Badge>
                       {pull.draft && <Badge variant="outline">draft</Badge>}
-                      <span className="font-medium">{pull.title}</span>
+                      <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{pull.title}</span>
                       {pull.labels.map(label => (
-                        <Badge key={label.name} variant="outline" className="font-normal">
+                        <Badge key={label.name} variant="outline" className="max-w-full whitespace-normal font-normal">
                           <LabelDot color={label.color || labelColor(label.name)} />
-                          {label.name}
+                          <span className="[overflow-wrap:anywhere]">{label.name}</span>
                         </Badge>
                       ))}
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                       #{pull.number} by {pull.author.name}
                       {pull.sourceBranch && (
                         <>
@@ -234,7 +234,7 @@ export function PullsPage({ sourceId, repo }: { sourceId: number; repo: string }
                       opened {timeAgo(pull.createdAt)}
                     </p>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground sm:shrink-0 sm:flex-col sm:items-end sm:justify-start">
                     <span>updated {timeAgo(pull.updatedAt)}</span>
                     {pull.comments > 0 && (
                       <span className="flex items-center gap-1">

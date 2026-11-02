@@ -14,13 +14,14 @@ import type { CompiledFilterRules } from "@/lib/filter-rules";
 import { isInHiddenFolder, isTestOrGenerated } from "@/lib/hidden-files";
 import { changeView, parse } from "@/lib/parsed-file";
 import { routes } from "@/lib/routes";
+import { useReviewFilters } from "@/lib/review-filters";
 import { queryClient, trpc } from "@/lib/trpc";
 import { timeAgo } from "@/lib/utils";
 import type { LinePosition } from "@/server/providers/types";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ExternalLink, Eye, EyeOff, MessageSquareOff, MessageSquareText } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useSearchParams } from "wouter";
+import { ExternalLink, Eye, EyeOff, ListTree, MessageSquareOff, MessageSquareText, RotateCcw, WrapText, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Dialog } from "radix-ui";
 import { stateBadge } from "./pulls";
 
 export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: string; number: number }) {
@@ -29,7 +30,8 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   const pull = useQuery(trpc.pulls.get.queryOptions(input));
   const files = useQuery(trpc.pulls.files.queryOptions(input));
   const comments = useQuery(trpc.pulls.comments.queryOptions(input));
-  const [commentsHidden, toggleComments] = useStoredToggle("hideReviewComments");
+  const reviewFilters = useReviewFilters();
+  const commentsHidden = reviewFilters.hideReviewComments;
   const visibleComments = useMemo(() => commentsHidden ? [] : comments.data ?? [], [commentsHidden, comments.data]);
 
   const addComment = useMutation(
@@ -53,12 +55,20 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   // Memoized: the diff list rebuilds its rows whenever this array changes.
   const inline = useMemo(() => visibleComments.filter(c => c.position), [visibleComments]);
   const [tab, setTab] = useState("files");
+  const [wrapLines, setWrapLines] = useState(() => localStorage.diffWrapLines !== "false");
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const openingFind = useRef(false);
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const closeOnDesktop = () => { if (desktop.matches) setNavigationOpen(false); };
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
   const [jumpTo, setJumpTo] = useState<{ path?: string; group?: number; key: number }>();
-  const byContributor = useContributorFilter(input);
-  const repositoryFilterKey = `customFilters:${sourceId}:${repo}`;
-  const filterKey = `${repositoryFilterKey}:${number}`;
-  const filters = useFilterRules(filterKey, repositoryFilterKey);
-  const hiding = useHiddenFiles(sourceId, repo, files.data, byContributor.only, filters.compiled);
+  const byContributor = useContributorFilter(input, reviewFilters.by);
+  const filterKey = `${sourceId}:${repo}:${number}`;
+  const filters = useFilterRules(reviewFilters);
+  const hiding = useHiddenFiles(files.data, reviewFilters, byContributor.only, filters.compiled);
   const walkthrough = useWalkthrough(input);
   const groups = walkthrough.latest?.result?.groups;
   const [sidebar, setSidebar] = useState<string>(() => localStorage.pullSidebar ?? "groups");
@@ -74,6 +84,85 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   }, [groups, sidebar, hiding.visible]);
   const viewedCount = hiding.visible.filter(f => f.viewed).length;
   const hiddenCount = (files.data?.length ?? 0) - hiding.visible.length;
+  const reviewTools = pull.data && files.data && (
+    <>
+      <FilterRulesPanel key={filterKey} filters={filters} files={files.data} input={input} pull={pull.data} />
+      <WalkthroughPanel
+        walkthrough={walkthrough.latest}
+        headSha={pull.data.headSha}
+        onStart={walkthrough.start}
+        onCancel={walkthrough.cancel}
+      />
+    </>
+  );
+
+  const navigation = (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="justify-start"
+        aria-pressed={wrapLines}
+        onClick={() => {
+          localStorage.diffWrapLines = String(!wrapLines);
+          setWrapLines(!wrapLines);
+        }}
+      >
+        <WrapText /> Wrap lines: {wrapLines ? "On" : "Off"}
+      </Button>
+      <p className="text-xs text-muted-foreground sm:hidden">Tap a line number to ask or comment.</p>
+      <div className="space-y-3 lg:hidden">{reviewTools}</div>
+      {(byContributor.contributors.length > 1 || byContributor.selected) && (
+        <ContributorList
+          contributors={byContributor.contributors}
+          selected={byContributor.selected}
+          onSelect={reviewFilters.setContributor}
+          loading={byContributor.loading}
+          error={byContributor.error}
+        />
+      )}
+      {hiding.testCount > 0 && (
+        <Button variant="outline" size="sm" className="justify-start" onClick={hiding.toggleTests}>
+          {hiding.hideTests ? <Eye /> : <EyeOff />}
+          {hiding.hideTests ? "Show" : "Hide"} tests & generated ({hiding.testCount})
+        </Button>
+      )}
+      <Button variant="outline" size="sm" className="justify-start" onClick={hiding.toggleComments}>
+        {hiding.hideComments ? <MessageSquareText /> : <MessageSquareOff />}
+        {hiding.hideComments ? "Show" : "Hide"} comment-only changes
+      </Button>
+      {groups && (
+        <Tabs value={sidebar} onValueChange={toggleSidebar}>
+          <TabsList className="w-full">
+            <TabsTrigger value="groups">Groups ({groups.length})</TabsTrigger>
+            <TabsTrigger value="files">Files</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+      <div className="min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+        {groups && sidebar === "groups" ? (
+          <GroupList
+            groups={groups}
+            files={new Map(hiding.visible.map(f => [f.newPath, f]))}
+            onSelectGroup={group => { setJumpTo({ group, key: Date.now() }); setNavigationOpen(false); }}
+            onSelectFile={path => { setJumpTo({ path, key: Date.now() }); setNavigationOpen(false); }}
+          />
+        ) : (
+          <FileTree
+            tree={hiding.tree}
+            hiddenFolders={hiding.hiddenFolders}
+            visiblePaths={hiding.visiblePaths}
+            onFolderHiddenChange={hiding.setFolderHidden}
+            onSelect={path => { setJumpTo({ path, key: Date.now() }); setNavigationOpen(false); }}
+          />
+        )}
+      </div>
+      <p className="hidden text-xs text-muted-foreground lg:block">
+        <kbd>j</kbd>/<kbd>k</kbd> files{groups && <> · <kbd>]</kbd>/<kbd>[</kbd> groups</>} · <kbd>n</kbd> next
+        unviewed · <kbd>v</kbd> viewed
+      </p>
+    </>
+  );
 
   return (
     <Page
@@ -85,7 +174,10 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
       actions={
         pull.data && (
           <>
-            <Button variant="outline" size="sm" onClick={toggleComments} aria-pressed={commentsHidden}>
+            <Button variant="outline" size="sm" onClick={reviewFilters.reset} disabled={!reviewFilters.hasFilters}>
+              <RotateCcw /> Reset filters
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => reviewFilters.setToggle("hideReviewComments", !commentsHidden)} aria-pressed={commentsHidden}>
               {commentsHidden ? <MessageSquareText /> : <MessageSquareOff />}
               {commentsHidden ? "Show" : "Hide"} comments
             </Button>
@@ -105,10 +197,10 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
       ) : (
         <div className="space-y-4">
           <div>
-            <h1 className="text-xl font-semibold">
+            <h1 className="text-xl font-semibold [overflow-wrap:anywhere]">
               {pull.data.title} <span className="font-normal text-muted-foreground">#{number}</span>
             </h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground [overflow-wrap:anywhere]">
               <Badge className={stateBadge[pull.data.state]}>{pull.data.state}</Badge>
               {pull.data.draft && <Badge variant="outline">draft</Badge>}
               <span>
@@ -119,7 +211,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
+            <TabsList className="max-w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto">
               <TabsTrigger value="conversation">Conversation ({comments.data?.length ?? "…"})</TabsTrigger>
               <TabsTrigger value="files">
                 Files (
@@ -131,7 +223,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
             </TabsList>
 
             <TabsContent value="conversation" className="max-w-4xl space-y-4">
-              <div className="rounded-md border bg-card p-4 text-sm whitespace-pre-wrap">
+              <div className="min-w-0 rounded-md border bg-card p-4 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {pull.data.body || <span className="text-muted-foreground">No description.</span>}
               </div>
               {commentsHidden && <p role="status" className="text-sm text-muted-foreground">Comments are hidden.</p>}
@@ -167,65 +259,37 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
               ) : !files.data ? (
                 <ListSkeleton />
               ) : (
-                <div className="grid grid-cols-[24rem_minmax(0,1fr)] gap-4">
-                  <aside className="sticky top-16 flex max-h-[calc(100vh-5rem)] flex-col gap-2 self-start">
-                    {(byContributor.contributors.length > 1 || byContributor.selected) && (
-                      <ContributorList
-                        contributors={byContributor.contributors}
-                        selected={byContributor.selected}
-                        onSelect={byContributor.select}
-                        loading={byContributor.loading}
-                        error={byContributor.error}
-                      />
-                    )}
-                    {hiding.testCount > 0 && (
-                      <Button variant="outline" size="sm" className="justify-start" onClick={hiding.toggleTests}>
-                        {hiding.hideTests ? <Eye /> : <EyeOff />}
-                        {hiding.hideTests ? "Show" : "Hide"} tests & generated ({hiding.testCount})
+                <div className="grid min-w-0 gap-4 pb-16 lg:grid-cols-[24rem_minmax(0,1fr)] lg:pb-0">
+                  <Dialog.Root open={navigationOpen} onOpenChange={setNavigationOpen}>
+                    <aside aria-label="Files and filters" className="sticky top-16 hidden max-h-[calc(100dvh-5rem)] min-w-0 flex-col gap-2 self-start lg:flex">
+                      {navigation}
+                    </aside>
+                    <Dialog.Trigger asChild>
+                      <Button size="icon" aria-label="Files & filters" title="Files & filters" className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-20 size-10 shadow-lg lg:hidden">
+                        <ListTree />
                       </Button>
-                    )}
-                    <Button variant="outline" size="sm" className="justify-start" onClick={hiding.toggleComments}>
-                      {hiding.hideComments ? <MessageSquareText /> : <MessageSquareOff />}
-                      {hiding.hideComments ? "Show" : "Hide"} comment-only changes
-                    </Button>
-                    {groups && (
-                      <Tabs value={sidebar} onValueChange={toggleSidebar}>
-                        <TabsList className="w-full">
-                          <TabsTrigger value="groups">Groups ({groups.length})</TabsTrigger>
-                          <TabsTrigger value="files">Files</TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    )}
-                    <div className="min-h-0 overflow-y-auto">
-                      {groups && sidebar === "groups" ? (
-                        <GroupList
-                          groups={groups}
-                          files={new Map(hiding.visible.map(f => [f.newPath, f]))}
-                          onSelectGroup={group => setJumpTo({ group, key: Date.now() })}
-                          onSelectFile={path => setJumpTo({ path, key: Date.now() })}
-                        />
-                      ) : (
-                        <FileTree
-                          tree={hiding.tree}
-                          hiddenFolders={hiding.hiddenFolders}
-                          onFolderHiddenChange={hiding.setFolderHidden}
-                          onSelect={path => setJumpTo({ path, key: Date.now() })}
-                        />
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      <kbd>j</kbd>/<kbd>k</kbd> files{groups && <> · <kbd>]</kbd>/<kbd>[</kbd> groups</>} · <kbd>n</kbd> next
-                      unviewed · <kbd>v</kbd> viewed
-                    </p>
-                  </aside>
-                  <div className="min-w-0 space-y-4">
-                    <FilterRulesPanel key={filterKey} filters={filters} files={files.data} input={input} pull={pull.data} />
-                    <WalkthroughPanel
-                      walkthrough={walkthrough.latest}
-                      headSha={pull.data.headSha}
-                      onStart={walkthrough.start}
-                      onCancel={walkthrough.cancel}
-                    />
+                    </Dialog.Trigger>
+                    <Dialog.Portal>
+                      <Dialog.Overlay className="fixed inset-0 z-30 bg-black/40 lg:hidden" />
+                      <Dialog.Content onCloseAutoFocus={event => {
+                        if (openingFind.current) event.preventDefault();
+                        openingFind.current = false;
+                      }} className="fixed inset-y-0 left-0 z-40 flex max-h-dvh w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-3 bg-background p-3 shadow-xl lg:hidden">
+                        <div className="flex items-center justify-between gap-2">
+                          <Dialog.Title className="font-semibold">Files &amp; filters</Dialog.Title>
+                          <Dialog.Close asChild>
+                            <Button variant="ghost" size="icon" aria-label="Close files and filters"><X /></Button>
+                          </Dialog.Close>
+                        </div>
+                        <Dialog.Description className="sr-only">Choose a file, contributor, or filter for this pull request.</Dialog.Description>
+                        <nav aria-label="Files and filters" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                          <div className="flex flex-col gap-2">{navigation}</div>
+                        </nav>
+                      </Dialog.Content>
+                    </Dialog.Portal>
+                  </Dialog.Root>
+                  <div className="-mx-3 min-w-0 space-y-4 sm:mx-0">
+                    <div className="hidden space-y-4 lg:block">{reviewTools}</div>
                     {hiding.visible.length > 0 ? tab === "files" && (
                       <DiffList
                         files={ordered}
@@ -237,6 +301,11 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
                         onAsk={questions.ask}
                         questionActions={questions.actions}
                         jumpTo={jumpTo}
+                        wrapLines={wrapLines}
+                        onOpenFind={() => {
+                          openingFind.current = navigationOpen;
+                          setNavigationOpen(false);
+                        }}
                         hideCommentChanges={hiding.hideComments}
                         filterRules={filters.compiled}
                         contributor={byContributor.filter}
@@ -268,9 +337,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
  * Showing one contributor's changes (`?by=` in the URL). Who committed comes from the forge right away; who changed
  * which line needs git blame in a local clone, so that's only fetched once someone is picked.
  */
-function useContributorFilter(input: { sourceId: number; repo: string; number: number }) {
-  const [params, setParams] = useSearchParams();
-  const selected = params.get("by") ?? undefined;
+function useContributorFilter(input: { sourceId: number; repo: string; number: number }, selected?: string) {
   const contributors = useQuery(trpc.pulls.contributors.queryOptions(input));
   const attribution = useQuery({ ...trpc.pulls.attribution.queryOptions(input), enabled: Boolean(selected), staleTime: Infinity });
 
@@ -302,13 +369,6 @@ function useContributorFilter(input: { sourceId: number; repo: string; number: n
   return {
     contributors: contributors.data ?? [],
     selected,
-    select: (key: string | undefined) =>
-      setParams(prev => {
-        const next = new URLSearchParams(prev);
-        if (key) next.set("by", key);
-        else next.delete("by");
-        return next;
-      }),
     loading: attribution.isFetching,
     error: attribution.error?.message,
     filter,
@@ -360,65 +420,36 @@ function useQuestions(input: { sourceId: number; repo: string; number: number })
 }
 const noThreads: QuestionThread[] = [];
 
-/** A boolean remembered in this browser. */
-function useStoredToggle(key: string) {
-  const [value, setValue] = useState(() => localStorage[key] === "true");
-  const toggle = () => {
-    localStorage[key] = String(!value);
-    setValue(!value);
-  };
-  return [value, toggle] as const;
-}
-
-/**
- * Hides test/generated files and comment-only changes (per-browser toggles) and folders hidden for
- * this repo (stored server-side). Returns the tree for the sidebar and the visible files in tree order.
- */
-function useHiddenFiles(sourceId: number, repo: string, files: File[] | undefined, only?: (file: File) => boolean, rules?: CompiledFilterRules) {
-  const [hideTests, toggleTests] = useStoredToggle("hideTestsAndGenerated");
-  const [hideComments, toggleComments] = useStoredToggle("hideCommentOnlyChanges");
-
-  const repoInput = { sourceId, repo };
-  const hiddenFolders = useQuery(trpc.repos.hiddenFolders.queryOptions(repoInput));
-  const setFolderHidden = useMutation(
-    trpc.repos.setFolderHidden.mutationOptions({
-      onMutate: ({ path, hidden }) =>
-        queryClient.setQueryData(trpc.repos.hiddenFolders.queryKey(repoInput), old =>
-          hidden ? [...(old ?? []), path] : old?.filter(p => p !== path),
-        ),
-      onSettled: () => queryClient.invalidateQueries({ queryKey: trpc.repos.hiddenFolders.queryKey(repoInput) }),
-    }),
-  );
+/** Applies only the current URL's filters and returns visible files in tree order. */
+function useHiddenFiles(files: File[] | undefined, filters: ReturnType<typeof useReviewFilters>, only?: (file: File) => boolean, rules?: CompiledFilterRules) {
+  const { hideTests, hideCommentChanges: hideComments, hiddenFolders } = filters;
 
   const testCount = useMemo(() => files?.filter(isTestOrGenerated).length ?? 0, [files]);
-  const tree = useMemo(
-    () =>
-      buildTree(
-        files?.filter(
-          f =>
-            !(hideTests && isTestOrGenerated(f)) &&
-            !rules?.hidesFile(f) &&
-            !changeView(parse(f), hideComments, rules).allHidden &&
-            (only?.(f) ?? true),
-        ) ?? [],
-      ),
-    [files, hideTests, hideComments, only, rules],
-  );
+  // Keep hidden files in the tree so their folders can explain what each filter excludes.
+  const tree = useMemo(() => buildTree(files ?? []), [files]);
   // Memoized: the diff list rebuilds its rows whenever this array changes.
   const visible = useMemo(
-    () => treeOrder(tree).filter(f => !isInHiddenFolder(f, hiddenFolders.data ?? [])),
-    [tree, hiddenFolders.data],
+    () => treeOrder(tree).filter(f =>
+      !isInHiddenFolder(f, hiddenFolders) &&
+      !(hideTests && isTestOrGenerated(f)) &&
+      !rules?.hidesFile(f) &&
+      !changeView(parse(f), hideComments, rules).allHidden &&
+      (only?.(f) ?? true),
+    ),
+    [tree, hiddenFolders, hideTests, hideComments, only, rules],
   );
+  const visiblePaths = useMemo(() => new Set(visible.map(file => file.newPath)), [visible]);
 
   return {
     hideTests,
-    toggleTests,
+    toggleTests: () => filters.setToggle("hideTests", !hideTests),
     hideComments,
-    toggleComments,
+    toggleComments: () => filters.setToggle("hideCommentChanges", !hideComments),
     testCount,
     tree,
     visible,
-    hiddenFolders: hiddenFolders.data ?? [],
-    setFolderHidden: (path: string, hidden: boolean) => setFolderHidden.mutate({ ...repoInput, path, hidden }),
+    visiblePaths,
+    hiddenFolders,
+    setFolderHidden: filters.setFolderHidden,
   };
 }

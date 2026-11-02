@@ -36,11 +36,11 @@ export function ReposPage({ sourceId }: { sourceId: number }) {
             {repos.data.map(repo => (
               <li key={repo.path}>
                 <Link href={routes.repo(sourceId, repo.path)} className="block px-4 py-3 hover:bg-muted/50">
-                  <div className="flex items-baseline gap-3">
-                    <span className="font-medium">{repo.path}</span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">{timeAgo(repo.updatedAt)}</span>
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+                    <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{repo.path}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground sm:ml-auto">{timeAgo(repo.updatedAt)}</span>
                   </div>
-                  {repo.description && <p className="truncate text-sm text-muted-foreground">{repo.description}</p>}
+                  {repo.description && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere] sm:truncate">{repo.description}</p>}
                 </Link>
               </li>
             ))}

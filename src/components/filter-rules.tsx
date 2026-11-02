@@ -5,41 +5,39 @@ import { Textarea } from "@/components/ui/textarea";
 import { compileFilterRules, exampleFilterRules, filterPrompt, parseFilterRules, type FilterRules } from "@/lib/filter-rules";
 import { changeView, parse, type File } from "@/lib/parsed-file";
 import { trpc } from "@/lib/trpc";
+import type { useReviewFilters } from "@/lib/review-filters";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Copy, Filter, LoaderCircle, Sparkles } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-function readSaved(key: string, inheritedKey?: string) {
-  try {
-    const stored = localStorage.getItem(key) ?? (inheritedKey ? localStorage.getItem(inheritedKey) : null);
-    if (stored) {
-      const value = JSON.parse(stored);
-      const parsed = parseFilterRules(JSON.stringify(value.rules));
-      const rules = parsed.rules.length ? parsed : undefined;
-      return { key, rules, enabled: Boolean(rules && value.enabled === true), error: "" };
-    }
-    return { key, rules: undefined, enabled: false, error: "" };
-  } catch {
-    return { key, rules: undefined, enabled: false, error: "Saved custom filters could not be loaded. Paste the rules again to restore them." };
-  }
-}
-
-/** Each PR remembers its filters; existing repository rules are inherited until it saves its own. */
-export function useFilterRules(key: string, inheritedKey?: string) {
-  const [saved, setSaved] = useState(() => readSaved(key, inheritedKey));
-  if (saved.key !== key) setSaved(readSaved(key, inheritedKey));
-  const current = saved.key === key ? saved : readSaved(key, inheritedKey);
+/** Keep the PR's editor alive when mobile controls move into or out of the drawer. */
+export function useFilterRules(filters: ReturnType<typeof useReviewFilters>) {
+  const { rules, rulesEnabled: enabled, error, setRules: save } = filters;
   const compiled = useMemo(
-    () => current.enabled && current.rules ? compileFilterRules(current.rules) : undefined,
-    [current.enabled, current.rules],
+    () => enabled && rules ? compileFilterRules(rules) : undefined,
+    [enabled, rules],
   );
-  const save = (rules: FilterRules | undefined, enabled: boolean) => {
-    // Save first: storage errors leave the currently applied rules intact.
-    if (rules) localStorage.setItem(key, JSON.stringify({ rules, enabled }));
-    else localStorage.setItem(key, JSON.stringify({ rules: { version: 1, rules: [] }, enabled: false }));
-    setSaved({ key, rules, enabled, error: "" });
+  const [request, setRequest] = useState("");
+  const appliedText = rules ? JSON.stringify(rules, null, 2) : "";
+  const [draft, setDraft] = useState(appliedText);
+  const [notice, setNotice] = useState("");
+  const [editorError, setError] = useState("");
+  const ownRuleUpdate = useRef<string | undefined>(undefined);
+  const [model, setModel] = useAgentModel("filterRuleModel", "sonnet");
+  const generated = useMutation(trpc.filters.generate.mutationOptions());
+  // Back/forward and reset can replace the applied rules without remounting the editor.
+  useEffect(() => {
+    setDraft(appliedText);
+    if (ownRuleUpdate.current !== appliedText) {
+      setNotice("");
+      setError("");
+    }
+    ownRuleUpdate.current = undefined;
+  }, [appliedText]);
+  return {
+    rules, enabled, error, compiled, save,
+    editor: { request, setRequest, draft, setDraft, notice, setNotice, error: editorError, setError, ownRuleUpdate, model, setModel, generated },
   };
-  return { ...current, compiled, save };
 }
 
 export function FilterRulesPanel({ filters, files, input, pull }: {
@@ -50,12 +48,7 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
-  const [request, setRequest] = useState("");
-  const [draft, setDraft] = useState(() => filters.rules ? JSON.stringify(filters.rules, null, 2) : "");
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
-  const [model, setModel] = useAgentModel("filterRuleModel", "sonnet");
-  const generated = useMutation(trpc.filters.generate.mutationOptions());
+  const { request, setRequest, draft, setDraft, notice, setNotice, error, setError, ownRuleUpdate, model, setModel, generated } = filters.editor;
   const preview = useMemo(() => {
     if (!draft.trim()) return undefined;
     try {
@@ -82,12 +75,14 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
   };
   const save = (rules: FilterRules | undefined, enabled: boolean) => {
     try {
+      ownRuleUpdate.current = rules ? JSON.stringify(rules, null, 2) : "";
       filters.save(rules, enabled);
       setError("");
       setNotice(rules ? (enabled ? "Custom filters applied." : "Custom filters paused.") : "Custom filters cleared.");
       return true;
     } catch {
-      setError("Could not save custom filters in this browser.");
+      ownRuleUpdate.current = undefined;
+      setError("Could not update the filter URL. Try a smaller rule set.");
       return false;
     }
   };
@@ -98,9 +93,10 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
         // The Clipboard API requires HTTPS; local VPN addresses commonly use HTTP.
         const field = document.createElement("textarea");
         const focused = document.activeElement;
+        const container = focused instanceof Element ? focused.closest('[role="dialog"]') : null;
         field.value = text;
         field.style.cssText = "position:fixed;opacity:0;pointer-events:none";
-        document.body.append(field);
+        (container ?? document.body).append(field);
         field.select();
         try {
           if (!document.execCommand("copy")) throw new Error("Clipboard unavailable");
@@ -128,7 +124,7 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
   };
 
   return (
-    <section className="rounded-md border bg-card p-3" aria-label="Custom filters">
+    <section className="min-w-0 rounded-md border bg-card p-3 [overflow-wrap:anywhere]" aria-label="Custom filters">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => setOpen(!open)} aria-expanded={open} aria-controls={`${id}-editor`}>
           <Filter /> Custom filters {open ? <ChevronUp /> : <ChevronDown />}
@@ -144,13 +140,13 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
       </div>
       {open && (
         <div id={`${id}-editor`} className="mt-3 space-y-3 border-t pt-3">
-          <p className="text-xs text-muted-foreground">Describe what matters to you. AI reads this pull request and proposes changes to hide. Saved for this PR in your browser.</p>
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Describe what matters to you. AI reads this pull request and proposes changes to hide. Applied filters are included in the URL; copy the full link to keep this view.</p>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor={`${id}-request`}>Describe what to hide</Label>
               <Textarea id={`${id}-request`} value={request} onChange={e => setRequest(e.target.value)} maxLength={4000}
                 placeholder="Show behavior changes. Hide mechanical edits that only wrap the same values in a requestBody object."
-                className="min-h-24" disabled={generated.isPending} />
+                className="min-h-24 min-w-0 resize-y" disabled={generated.isPending} />
               <div className="flex flex-wrap items-center gap-2">
                 <ModelPicker value={model} onChange={setModel} />
                 <Button size="sm" disabled={!request.trim() || generated.isPending} onClick={generate}>
@@ -163,11 +159,11 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
               </div>
               <p className="text-xs text-muted-foreground">Generate uses your installed AI CLI. Copy prompt includes this PR’s diff for use in another chat.</p>
             </div>
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor={`${id}-rules`}>Rules (JSON)</Label>
               <Textarea id={`${id}-rules`} value={draft} onChange={e => edit(e.target.value)} placeholder={exampleFilterRules}
                 maxLength={100000} spellCheck={false} disabled={generated.isPending} aria-invalid={Boolean(preview?.error)}
-                aria-describedby={preview?.error ? `${id}-error` : undefined} className="min-h-40 max-h-96 font-mono text-xs" />
+                aria-describedby={preview?.error ? `${id}-error` : undefined} className="min-h-40 max-h-96 min-w-0 resize-y font-mono text-base md:text-xs" />
               <div className="flex flex-wrap gap-2">
                 <Button variant="ghost" size="sm" disabled={generated.isPending} onClick={() => edit(exampleFilterRules)}>Use example</Button>
                 <Button variant="ghost" size="sm" disabled={!preview?.rules} onClick={() => copy(JSON.stringify(preview!.rules, null, 2), "Rules copied.")}><Copy /> Copy rules</Button>
@@ -189,7 +185,7 @@ export function FilterRulesPanel({ filters, files, input, pull }: {
             </ul>
           )}
           {preview?.rules && <p className="text-sm" role="status">Preview: {preview.hiddenFiles} of {files.length} files and {preview.hiddenLines} changed lines would be hidden by these rules.</p>}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={!preview?.rules?.rules.length || generated.isPending} onClick={() => preview?.rules && save(preview.rules, true)}>Apply rules</Button>
             <Button variant="ghost" size="sm" disabled={generated.isPending} onClick={() => { if (save(undefined, false)) setDraft(""); }}>Clear rules</Button>
           </div>
