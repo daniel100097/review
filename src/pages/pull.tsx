@@ -1,6 +1,8 @@
 import { CommentForm, CommentItem } from "@/components/comment";
 import { DiffList, type File } from "@/components/diff-list";
 import { FilterRulesPanel, useFilterRules } from "@/components/filter-rules";
+import { FilterProfilesPanel, useFilterProfiles } from "@/components/filter-profiles";
+import { FlowmarkPanel, useFlowmark } from "@/components/flowmark";
 import type { QuestionActions, QuestionThread } from "@/components/question-thread";
 import { GroupList, WalkthroughPanel } from "@/components/walkthrough";
 import { ContributorList, type ContributorFilter } from "@/components/contributors";
@@ -55,6 +57,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   // Memoized: the diff list rebuilds its rows whenever this array changes.
   const inline = useMemo(() => visibleComments.filter(c => c.position), [visibleComments]);
   const [tab, setTab] = useState("files");
+  const flowmark = useFlowmark(input, tab === "flowmark");
   const [wrapLines, setWrapLines] = useState(() => localStorage.diffWrapLines !== "false");
   const [navigationOpen, setNavigationOpen] = useState(false);
   const openingFind = useRef(false);
@@ -68,6 +71,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
   const byContributor = useContributorFilter(input, reviewFilters.by);
   const filterKey = `${sourceId}:${repo}:${number}`;
   const filters = useFilterRules(reviewFilters);
+  const profiles = useFilterProfiles({ sourceId, repo }, reviewFilters, filters);
   const hiding = useHiddenFiles(files.data, reviewFilters, byContributor.only, filters.compiled);
   const walkthrough = useWalkthrough(input);
   const groups = walkthrough.latest?.result?.groups;
@@ -98,6 +102,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
 
   const navigation = (
     <>
+      <FilterProfilesPanel profiles={profiles} />
       <Button
         variant="outline"
         size="sm"
@@ -139,7 +144,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
           </TabsList>
         </Tabs>
       )}
-      <div className="min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+      <div className="shrink-0">
         {groups && sidebar === "groups" ? (
           <GroupList
             groups={groups}
@@ -220,7 +225,12 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
                   : "…"}
                 )
               </TabsTrigger>
+              <TabsTrigger value="flowmark">Flowmark</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="flowmark">
+              <FlowmarkPanel flowmark={flowmark} input={input} baseSha={pull.data.baseSha} headSha={pull.data.headSha} />
+            </TabsContent>
 
             <TabsContent value="conversation" className="max-w-4xl space-y-4">
               <div className="min-w-0 rounded-md border bg-card p-4 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
@@ -261,7 +271,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
               ) : (
                 <div className="grid min-w-0 gap-4 pb-16 lg:grid-cols-[24rem_minmax(0,1fr)] lg:pb-0">
                   <Dialog.Root open={navigationOpen} onOpenChange={setNavigationOpen}>
-                    <aside aria-label="Files and filters" className="sticky top-16 hidden max-h-[calc(100dvh-5rem)] min-w-0 flex-col gap-2 self-start lg:flex">
+                    <aside aria-label="Files and filters" className="sticky top-16 hidden max-h-[calc(100dvh-5rem)] min-w-0 flex-col gap-2 self-start overflow-y-auto overscroll-contain lg:flex">
                       {navigation}
                     </aside>
                     <Dialog.Trigger asChild>

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type FilterRules } from "./filter-rules";
-import { readReviewFilters, reviewFilterActions, updateReviewFilters } from "./review-filters";
+import { captureReviewFilters, readReviewFilters, reviewFilterActions, updateReviewFilters } from "./review-filters";
 
 const base = "https://review.example/sources/1/repo/pull/2";
 const exactRules: FilterRules = {
@@ -199,5 +199,52 @@ test("setRules validates before navigating, clears empty rules, and reset remove
     location.href = `${base}?view=split&hideTests=1#diff/%e6%97%a5+%20`;
     reviewFilterActions.reset();
     expect(location.href).toBe(`${base}?view=split#diff/%e6%97%a5+%20`);
+  });
+});
+
+test("a saved profile replaces every owned filter in one history entry and preserves unrelated URL data", () => {
+  withBrowser((location, pushes) => {
+    location.href = `${base}?view=split&hideTests=1&hideFolder=old&by=old#anchor=diff42&rulesPaused=1`;
+    const before = location.href;
+    const saved = captureReviewFilters(readReviewFilters(new URL(`${base}?hideCommentChanges=1&hideReviewComments=1&hideFolder=src%2F%E6%97%A5&by=Zo%C3%AB`)), "Hide mechanical wrapping");
+    saved.rules = exactRules;
+    saved.rulesEnabled = false;
+    reviewFilterActions.replace(saved);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]!.state).toEqual({ scroll: 42 });
+    const applied = new URL(location.href);
+    expect(applied.searchParams.get("view")).toBe("split");
+    expect(new URLSearchParams(applied.hash.slice(1)).get("anchor")).toBe("diff42");
+    expect(applied.searchParams.has("rules")).toBe(false);
+    expect(location.href).not.toContain("mechanical");
+    expect(readReviewFilters(applied)).toMatchObject({
+      hideTests: false, hideCommentChanges: true, hideReviewComments: true,
+      hiddenFolders: ["src/日"], by: "Zoë", rules: exactRules, rulesEnabled: false,
+    });
+    // Back restores the entire previous view; applying empty settings also clears stale rules.
+    location.href = before;
+    expect(readReviewFilters(new URL(location.href))).toMatchObject({ hideTests: true, hiddenFolders: ["old"], by: "old" });
+    location.href = applied.href;
+    reviewFilterActions.replace(captureReviewFilters(readReviewFilters(new URL(base)), ""));
+    expect(location.href).toBe(`${base}?view=split#anchor=diff42`);
+    expect(readReviewFilters(new URL(location.href)).hasFilters).toBe(false);
+  });
+});
+
+test("profile capture includes only applied settings and validates before saving or navigating", () => {
+  withBrowser((location, pushes) => {
+    const initial = location.href;
+    const filters = readReviewFilters(new URL(`${base}?hideTests=1`));
+    const saved = captureReviewFilters(filters, "  Only behavior changes  ");
+    expect(saved).toMatchObject({ hideTests: true, request: "  Only behavior changes  " });
+    expect(saved).not.toHaveProperty("hasFilters");
+    expect(saved).not.toHaveProperty("error");
+    filters.hiddenFolders.push("later");
+    expect(saved.hiddenFolders).toEqual([]);
+    expect(() => captureReviewFilters(readReviewFilters(new URL(`${base}#rules=%7B`)), "")).toThrow("invalid custom rules");
+    expect(() => captureReviewFilters(filters, "x".repeat(4001))).toThrow();
+    expect(() => reviewFilterActions.replace({ ...saved, rules: { version: 2, rules: [] } as unknown as FilterRules })).toThrow();
+    expect(location.href).toBe(initial);
+    expect(pushes).toHaveLength(0);
   });
 });

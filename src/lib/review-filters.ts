@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { navigate, useLocationProperty } from "wouter/use-browser-location";
 import { parseFilterRules, type FilterRules } from "./filter-rules";
+import { filterProfileSettingsSchema, type FilterProfileSettings } from "./filter-profiles";
 
 const queryKeys = ["hideTests", "hideCommentChanges", "hideReviewComments", "hideFolder", "by"];
 const fragmentKeys = ["rules", "rulesPaused"];
@@ -50,6 +51,32 @@ function changeFilters(update: FilterUpdate) {
   navigate(updateReviewFilters(new URL(window.location.href), update), { state: history.state });
 }
 
+/** Save applied filters; the editor's unreviewed JSON draft is deliberately excluded. */
+export function captureReviewFilters(filters: ReturnType<typeof readReviewFilters>, request: string): FilterProfileSettings {
+  if (filters.error) throw new Error("Fix the invalid custom rules before saving a profile.");
+  return filterProfileSettingsSchema.parse({
+    hideTests: filters.hideTests,
+    hideCommentChanges: filters.hideCommentChanges,
+    hideReviewComments: filters.hideReviewComments,
+    hiddenFolders: filters.hiddenFolders,
+    by: filters.by,
+    rules: filters.rules,
+    rulesEnabled: filters.rulesEnabled,
+    request,
+  });
+}
+
+function writeRules(fragment: URLSearchParams, rules: FilterRules | undefined, enabled: boolean) {
+  if (rules?.rules.length) {
+    // Fragments keep large exact selections out of the HTTP request URL.
+    fragment.set("rules", JSON.stringify(rules));
+    if (enabled) fragment.delete("rulesPaused");
+    else fragment.set("rulesPaused", "1");
+  } else {
+    for (const key of fragmentKeys) fragment.delete(key);
+  }
+}
+
 // These actions read the URL at call time, including consecutive calls before React renders.
 export const reviewFilterActions = {
   setToggle(key: ToggleKey, value: boolean) {
@@ -69,15 +96,18 @@ export const reviewFilterActions = {
   },
   setRules(rules: FilterRules | undefined, enabled: boolean) {
     const parsed = rules === undefined ? undefined : parseFilterRules(JSON.stringify(rules));
-    changeFilters((_, fragment) => {
-      if (parsed?.rules.length) {
-        // Fragments keep large exact selections out of the HTTP request URL.
-        fragment.set("rules", JSON.stringify(parsed));
-        if (enabled) fragment.delete("rulesPaused");
-        else fragment.set("rulesPaused", "1");
-      } else {
-        for (const key of fragmentKeys) fragment.delete(key);
+    changeFilters((_, fragment) => writeRules(fragment, parsed, enabled));
+  },
+  replace(settings: FilterProfileSettings) {
+    const parsed = filterProfileSettingsSchema.parse(settings);
+    changeFilters((query, fragment) => {
+      for (const key of queryKeys) query.delete(key);
+      for (const key of ["hideTests", "hideCommentChanges", "hideReviewComments"] as const) {
+        if (parsed[key]) query.set(key, "1");
       }
+      for (const folder of new Set(parsed.hiddenFolders)) query.append("hideFolder", folder);
+      if (parsed.by) query.set("by", parsed.by);
+      writeRules(fragment, parsed.rules, parsed.rulesEnabled);
     });
   },
   reset() {

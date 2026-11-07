@@ -1,7 +1,10 @@
 import { version } from "../package.json";
 
 // The executable also hosts the bundled ACP adapters in separate processes.
-if (process.argv[2] === "--acp-agent") {
+if (process.argv[2] === "--flowmark-parser") {
+  const { runFlowmarkParser } = await import("./server/flowmark-parser");
+  await runFlowmarkParser();
+} else if (process.argv[2] === "--acp-agent") {
   const agent = process.argv[3];
   process.argv.splice(2, 2);
   if (agent === "claude") await import("@agentclientprotocol/claude-agent-acp/dist/index.js");

@@ -4,6 +4,8 @@ import { agentKinds } from "@/lib/agents";
 import { z } from "zod";
 import { db } from "./db";
 import { hiddenFolders, sources, viewedFiles } from "./db/schema";
+import { filterProfilesRouter } from "./filter-profiles";
+import { flowmarkRouter } from "./flowmark";
 import { askQuestion, cancelAnswer, deleteThread, followUp, listThreads } from "./agents/questions";
 import { cancelWalkthrough, latestWalkthrough, startWalkthrough } from "./agents/walkthroughs";
 import { generateFilterRules } from "./agents/filter-rules";
@@ -22,6 +24,9 @@ const linePosition = z.object({
 });
 
 export const appRouter = router({
+  flowmark: flowmarkRouter,
+  filterProfiles: filterProfilesRouter,
+
   filters: router({
     generate: sourceProcedure
       .input(pullInput.extend({ request: z.string().trim().min(1).max(4000), agent: z.enum(agentKinds), model: z.string().min(1).max(200) }))

@@ -100,9 +100,21 @@ The query parameters are `hideTests=1`, `hideCommentChanges=1`, `hideReviewComme
 
 Folders affected by any filter appear in amber with a hidden-file count, including parents of hidden subfolders. Filtered folders stay in the tree so you can see which parts of the change are excluded.
 
+**Filter profiles** in the sidebar (or **Files & filters** drawer) save named setups per repository on the UI server, available across browsers and devices. **Save profile** captures the applied filters and the AI instruction; apply any rule draft before saving. Choose a saved profile and **Apply profile** to replace the current PR's filters, **Update profile** to save your current setup over it, or **Delete profile** to remove it. Profiles never apply automatically, and applying one keeps the complete filter settings in the URL, so shared links work independently of the profile.
+
+Reusable path/line rules and hidden folders work across PRs. Exact AI selections apply only to their original patch; the saved instruction is restored in **Custom filters**, where **Generate** can analyze the current PR again.
+
 ## AI agents
 
 Agents run the installed `claude` or `codex` CLI with its existing login, through the [ACP](https://agentclientprotocol.com) adapters `@agentclientprotocol/claude-agent-acp` and `@agentclientprotocol/codex-acp`, as plain subprocesses. Claude gets read tools (Read, Grep, Glob, and a read-only `git` tool on our MCP server), and Codex runs in its read-only mode. `read-only-command.ts` approves permission requests for commands that only read. Agents call back into the server through per-run MCP tools served at `/mcp/<run token>`.
+
+### Flowmark
+
+Open a PR's **Flowmark** tab and select **Generate for this PR**. **Changes** generates matching before/after explanations for the exact base and head commits, with the viewer's **Changes / Before / After** controls. **Walkthrough** generates an explanation of the current flow. An optional focus can narrow the review to a particular capability. L0 shows the card, risks and checker findings; L1–L3 reveal more detail while keeping risks visible.
+
+Generation uses your selected AI CLI with read-only source tools and the upstream [flowmark-review skill](https://github.com/daniel100097/flowmark/blob/main/skills/flowmark-review/SKILL.md), including its level guide and examples. The backend runs the real [Flowmark](https://github.com/daniel100097/flowmark) WASM parser/checker and TypeScript 5 strict prelude typecheck before accepting the result, then returns its view model through tRPC. The writer reports its capability scope, omitted capabilities, language gaps, unverified citations, and deliberately retained warnings. Reviews and their source documents are saved in the local database per PR and commit pair, so you can return on another device. **Stop** cancels generation; **Download review / Download before** export the `.review.ts` documents. A review from an earlier PR revision is labeled explicitly.
+
+The upstream viewer runs inside a sandboxed frame, containing its styles, keyboard shortcuts and level fragments. Code references can be copied from their chips. The current upstream checker validates Flowmark structure, not whether citations resolve in the repository; generated claims still need review. No Rust install is required to run the UI: the pinned parser and viewer ship with it. See [the asset provenance and update instructions](src/vendor/flowmark/README.md).
 
 ### Custom change filters
 

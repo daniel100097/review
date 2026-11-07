@@ -1,5 +1,7 @@
 import { integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { agentKinds } from "@/lib/agents";
+import type { FilterProfileSettings } from "@/lib/filter-profiles";
+import type { FlowmarkModel } from "@/lib/flowmark";
 import type { Walkthrough } from "../agents/walkthrough";
 import { providerKinds } from "../providers/types";
 
@@ -44,6 +46,21 @@ export const hiddenFolders = sqliteTable(
     path: text("path").notNull(),
   },
   t => [primaryKey({ columns: [t.sourceId, t.repo, t.path] })],
+);
+
+/** Saved review filters for a repository on one forge source. */
+export const filterProfiles = sqliteTable(
+  "filter_profiles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sourceId: integer("source_id")
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" }),
+    repo: text("repo").notNull(),
+    name: text("name").notNull(),
+    settings: text("settings", { mode: "json" }).$type<FilterProfileSettings>().notNull(),
+  },
+  t => [unique().on(t.sourceId, t.repo, t.name)],
 );
 
 /** A local conversation with an agent about lines of a pull request's diff, at the head commit it was asked on. */
@@ -105,4 +122,24 @@ export const walkthroughs = sqliteTable("walkthroughs", {
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
+});
+
+/** Generated Flowmark explanations, attached to the exact PR base/head snapshot. */
+export const flowmarkReviews = sqliteTable("flowmark_reviews", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sourceId: integer("source_id").notNull().references(() => sources.id, { onDelete: "cascade" }),
+  repo: text("repo").notNull(),
+  number: integer("number").notNull(),
+  baseSha: text("base_sha").notNull(),
+  headSha: text("head_sha").notNull(),
+  mode: text("mode", { enum: ["changes", "walkthrough"] }).notNull(),
+  request: text("request").notNull().default(""),
+  agent: text("agent", { enum: agentKinds }).notNull(),
+  model: text("model").notNull(),
+  status: text("status", { enum: ["running", "done", "failed", "cancelled"] }).notNull(),
+  baseSource: text("base_source"),
+  headSource: text("head_source"),
+  result: text("result", { mode: "json" }).$type<FlowmarkModel>(),
+  error: text("error"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });

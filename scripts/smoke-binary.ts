@@ -29,6 +29,17 @@ try {
     assert.match(stdout, /\d+\.\d+\.\d+/);
   }
 
+  // The parser must work from a standalone executable with no source checkout or Rust installation.
+  const example = await Bun.file(path.resolve("src/vendor/flowmark/example.txt")).text();
+  const parser = Bun.spawn([executable, "--flowmark-parser"], {
+    cwd: scratch, env, stdin: new Response(JSON.stringify({ base: "", head: example })), stdout: "pipe", stderr: "pipe", timeout: 15_000,
+  });
+  const [parsed, parserErrors, parserCode] = await Promise.all([
+    new Response(parser.stdout).text(), new Response(parser.stderr).text(), parser.exited,
+  ]);
+  assert.equal(parserCode, 0, parserErrors);
+  assert.equal(JSON.parse(parsed).title, "Register user");
+
   const server = Bun.spawn([executable], { cwd: scratch, env, stdout: "pipe", stderr: "pipe" });
   const stderr = new Response(server.stderr).text();
   const startupTimeout = setTimeout(() => server.kill(), 15_000);
@@ -63,7 +74,7 @@ try {
     const database = new Database(path.join(env.XDG_DATA_HOME, "codereview-ui", "codereview.sqlite"), { readonly: true });
     try {
       const tables = database.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'").all();
-      for (const name of ["sources", "viewed_files", "hidden_folders", "question_threads", "question_messages", "walkthroughs"]) {
+      for (const name of ["sources", "viewed_files", "hidden_folders", "question_threads", "question_messages", "walkthroughs", "filter_profiles", "flowmark_reviews"]) {
         assert(tables.some(table => table.name === name), `Migration created ${name}`);
       }
     } finally {
