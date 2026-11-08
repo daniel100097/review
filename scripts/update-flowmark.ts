@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, copyFile, chmod, rm } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 
-const revision = "ea687064a93ccf70d2d3234a63877032889dcdf8";
+const revision = "7a123264358c5cd1d219fc92b0275d6ceee02a71";
 const scratch = await mkdtemp(path.join(tmpdir(), "codereview-flowmark-"));
 const target = path.join(process.env.XDG_CACHE_HOME ?? path.join(homedir(), ".cache"), "codereview-ui", "flowmark-target");
 const output = path.resolve(import.meta.dir, "../src/vendor/flowmark");
@@ -22,7 +22,6 @@ try {
     ["examples/register-user.review.ts", "example.txt"],
     ["skills/flowmark-review/SKILL.md", "SKILL.md.txt"],
     ["skills/flowmark-review/reference/levels.md", "levels.txt"],
-    ["skills/flowmark-review/examples/t3code-update-server-settings.review.ts", "rpc-example.txt"],
   ]) await copyFile(path.join(scratch, source!), path.join(output, name!));
   await copyFile(path.join(target, "wasm32-unknown-unknown/wasm/flowmark_wasm.wasm"), path.join(output, "flowmark.wasm"));
   await chmod(path.join(output, "flowmark.wasm"), 0o644);

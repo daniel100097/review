@@ -9,7 +9,7 @@ afterEach(() => mock.restore());
 const pull = {
   number: 7, title: "Change retries", body: "Untrusted PR body", baseSha: "a".repeat(40), headSha: "b".repeat(40),
 } as PullRequest;
-const files = [{ oldPath: "src/mail.ts", newPath: "src/mail.ts", status: "modified" as const, patch: "@@ -1 +1 @@\n-retries: 3\n+retries: 5" }];
+const files = [{ oldPath: "src/mail.ts", newPath: "src/mail.ts", status: "modified" as const, patch: "@@ -1 +1 @@\n-retries: 2\n+retries: 5" }];
 const options = () => ({
   agent: "codex" as const, model: "test", mode: "changes" as const, request: "Explain queued mail", pull, files,
   signal: new AbortController().signal, onActivity: () => {}, readSource: async () => "const retries = 5;",
@@ -51,12 +51,12 @@ test("requires real base/head reads and valid checker output before accepting a 
       const invalid = await submit({ base: "not a valid Flowmark review", head: example });
       expect(invalid.isError).toBe(true);
       expect(invalid.content[0].text).toContain("before:");
-      const preview = await (await call(url, "preview_flowmark", { base: example, head: example.replace("retries: 3", "retries: 5") })).json();
+      const preview = await (await call(url, "preview_flowmark", { base: example, head: example.replace("retries: 2", "retries: 5") })).json();
       expect(preview.result.isError).toBe(false);
       const views = JSON.parse(preview.result.content[0].text).views;
       expect(views.head.card).toContain("Register user");
       expect(views.head.flow).toContain("registerUser");
-      expect((await submit({ base: example, head: example.replace("retries: 3", "retries: 5") })).isError).not.toBe(true);
+      expect((await submit({ base: example, head: example.replace("retries: 2", "retries: 5") })).isError).not.toBe(true);
       return "end_turn";
     }, { resumed: false });
   });

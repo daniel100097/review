@@ -14,18 +14,18 @@ test("runs the real Flowmark parser and preserves risks, levels, and checker fin
 });
 
 test("checks prelude types on both sides and catches errors that pass syntax checking", async () => {
-  const model = await parseFlowmark({ base: example.replace("retries: 3", 'retries: "many"'), head: example });
+  const model = await parseFlowmark({ base: example.replace("retries: 2", 'retries: "many"'), head: example });
   expect(model.typechecked).toBe(false);
   expect(model.sides?.base.diagnostics.some(d => d.code.startsWith("TS") && d.severity === "error")).toBe(true);
   expect(model.sides?.head.typechecked).toBe(true);
 });
 
 test("builds Changes / Before / After using actual before and after documents", async () => {
-  const head = example.replace('retries: 3', 'retries: 5');
+  const head = example.replace('retries: 2', 'retries: 5');
   const model = await parseFlowmark({ base: example, head });
   const sides = model.sides as { base: { rows: unknown[] }; head: { rows: unknown[] } };
   expect(sides.base.rows.length).toBeGreaterThan(50);
-  expect(JSON.stringify(sides.base)).toContain('3');
+  expect(JSON.stringify(sides.base)).toContain('2');
   expect(JSON.stringify(sides.head)).toContain('5');
   expect(model.changes).toMatchObject({ lines_added: 1, lines_removed: 1 });
 });
