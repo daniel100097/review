@@ -1,4 +1,4 @@
-import { EmptyState, ListSkeleton, Page, QueryError, useSource } from "@/components/page";
+import { EmptyState, ListSkeleton, MetaRow, Page, QueryError, useSource } from "@/components/page";
 import { PullStateIcon } from "@/components/pull-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -328,12 +328,12 @@ function PullRow({ pull, href, labelColor }: { pull: PullSummary; href: string; 
             </Badge>
           ))}
         </div>
-        {/* On phones the branches go last on their own line (truncated there), so wrapping rarely starts a line with a dot. */}
-        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground [&>*+*]:before:mr-1.5 [&>*+*]:before:content-['·']">
+        {/* On phones the branches go last on their own line, truncated there. */}
+        <MetaRow className="mt-1 text-xs text-muted-foreground">
           <span className="tabular-nums">#{pull.number}</span>
           <span title={`@${pull.author.username}`}>{pull.author.name}</span>
           {pull.sourceBranch && (
-            <span className="flex min-w-0 max-w-full items-center max-sm:order-last max-sm:basis-full max-sm:before:hidden">
+            <span className="max-sm:order-last max-sm:basis-full">
               <span className="min-w-0 truncate font-mono sm:max-w-72" title={pull.sourceBranch}>
                 {pull.sourceBranch}
               </span>
@@ -344,7 +344,7 @@ function PullRow({ pull, href, labelColor }: { pull: PullSummary; href: string; 
             </span>
           )}
           <span>updated {timeAgo(pull.updatedAt)}</span>
-        </div>
+        </MetaRow>
       </div>
       {pull.comments > 0 && (
         <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums" title={`${pull.comments} comments`}>

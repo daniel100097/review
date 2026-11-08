@@ -27,7 +27,7 @@ export function CommentItem({ comment, context }: { comment: Comment; context?: 
           </time>
           {context}
         </div>
-        <Markdown className="mt-1">{comment.body}</Markdown>
+        <Markdown className="mt-1" loadImages>{comment.body}</Markdown>
       </div>
     </div>
   );

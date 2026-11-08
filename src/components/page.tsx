@@ -75,7 +75,15 @@ export function Page({
           <ThemeToggle />
         </div>
       </header>
-      <main className={cn("min-w-0 px-[max(0.75rem,env(safe-area-inset-left))] py-4 sm:px-4 sm:py-6", !wide && "mx-auto max-w-5xl")}>{children}</main>
+      {/* Like the header, keeps clear of a notch on either side at every width (landscape phones are past sm). */}
+      <main
+        className={cn(
+          "min-w-0 py-4 pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] sm:py-6 sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))]",
+          !wide && "mx-auto max-w-5xl",
+        )}
+      >
+        {children}
+      </main>
     </div>
   );
 }
@@ -118,6 +126,22 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
           <Skeleton className="h-3 w-1/3" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A dot-separated info row (under a PR's title, over a Flowmark review, in the pull list). Each child is one item
+ * and brings its own leading "·" as generated content; the row is pulled left by the dot's width and clipped, so
+ * a wrapped line never starts with one. Items shrink, so text in them can `truncate`. Wrap a pill in a span, or
+ * the dot ends up inside it. Set the text size and color on `className`.
+ */
+export function MetaRow({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <div className={cn("min-w-0 overflow-hidden", className)}>
+      <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 *:inline-flex *:min-w-0 *:max-w-full *:items-center *:before:w-4 *:before:shrink-0 *:before:text-center *:before:content-['·']">
+        {children}
+      </div>
     </div>
   );
 }

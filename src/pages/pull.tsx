@@ -8,7 +8,7 @@ import type { QuestionActions, QuestionThread } from "@/components/question-thre
 import { GroupList, WalkthroughPanel } from "@/components/walkthrough";
 import { ContributorList, type ContributorFilter } from "@/components/contributors";
 import { buildTree, FileTree, treeOrder } from "@/components/file-tree";
-import { EmptyState, ListSkeleton, Page, QueryError, useSource } from "@/components/page";
+import { EmptyState, ListSkeleton, MetaRow, Page, QueryError, useSource } from "@/components/page";
 import { PullStateBadge } from "@/components/pull-state";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -400,28 +400,17 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
             <h1 className="text-xl font-semibold tracking-tight [overflow-wrap:anywhere]">
               {pull.data.title} <span className="font-normal text-muted-foreground">#{number}</span>
             </h1>
-            {/* Each item brings its own leading "·"; the row is pulled left and clipped, so a wrapped line never
-                starts or ends with one. */}
-            <div className="overflow-hidden text-sm text-muted-foreground">
-              <div className="-ml-4 flex flex-wrap items-center gap-y-1">
-                {[
-                  <PullStateBadge state={pull.data.state} draft={pull.data.draft} />,
-                  pull.data.author.name,
-                  <>
-                    <span title={pull.data.sourceBranch} className="min-w-0 truncate font-mono text-[13px]">{pull.data.sourceBranch}</span>
-                    <span aria-hidden className="shrink-0 px-1.5">→</span>
-                    <span className="sr-only"> into </span>
-                    <span title={pull.data.targetBranch} className="min-w-0 truncate font-mono text-[13px]">{pull.data.targetBranch}</span>
-                  </>,
-                  `opened ${timeAgo(pull.data.createdAt)}`,
-                ].map((item, i) => (
-                  <span key={i} className="inline-flex min-w-0 max-w-full items-center">
-                    <span aria-hidden className="w-4 shrink-0 text-center">·</span>
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
+            <MetaRow className="text-sm text-muted-foreground">
+              <span><PullStateBadge state={pull.data.state} draft={pull.data.draft} /></span>
+              <span>{pull.data.author.name}</span>
+              <span>
+                <span title={pull.data.sourceBranch} className="min-w-0 truncate font-mono text-[13px]">{pull.data.sourceBranch}</span>
+                <span aria-hidden className="shrink-0 px-1.5">→</span>
+                <span className="sr-only"> into </span>
+                <span title={pull.data.targetBranch} className="min-w-0 truncate font-mono text-[13px]">{pull.data.targetBranch}</span>
+              </span>
+              <span>opened {timeAgo(pull.data.createdAt)}</span>
+            </MetaRow>
           </div>
 
           <Tabs value={tab} onValueChange={setTab} className="mt-4 gap-4">
@@ -448,7 +437,7 @@ export function PullPage({ sourceId, repo, number }: { sourceId: number; repo: s
 
             <TabsContent value="conversation" className="max-w-3xl space-y-6">
               {pull.data.body ? (
-                <Markdown>{pull.data.body}</Markdown>
+                <Markdown loadImages>{pull.data.body}</Markdown>
               ) : (
                 <p className="text-sm text-muted-foreground">No description.</p>
               )}
