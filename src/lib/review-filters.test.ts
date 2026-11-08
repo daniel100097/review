@@ -180,6 +180,16 @@ test("consecutive setters preserve all filters and history state, with full larg
   });
 });
 
+test("clearing folders unhides all of them in one history entry and keeps other filters", () => {
+  withBrowser((location, pushes) => {
+    location.href = `${base}?view=split&hideFolder=a&hideTests=1&hideFolder=b%2Fc&by=x#anchor=diff42`;
+    reviewFilterActions.clearFolders();
+    expect(pushes).toHaveLength(1);
+    expect(location.href).toBe(`${base}?view=split&hideTests=1&by=x#anchor=diff42`);
+    expect(readReviewFilters(new URL(location.href))).toMatchObject({ hiddenFolders: [], hideTests: true, by: "x" });
+  });
+});
+
 test("setRules validates before navigating, clears empty rules, and reset removes only owned parameters", () => {
   withBrowser((location, pushes) => {
     const original = location.href;

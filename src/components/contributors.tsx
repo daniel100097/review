@@ -13,7 +13,7 @@ export interface ContributorFilter {
   lines: Map<string, { added: Map<number, Author>; deleted: Map<number, Author> }>;
 }
 
-/** The sidebar list: pick a contributor to see only what they changed. */
+/** Chips for a section of the Filters popover: pick a contributor to see only what they changed. */
 export function ContributorList({
   contributors,
   selected,
@@ -28,16 +28,20 @@ export function ContributorList({
   error?: string;
 }) {
   return (
-    <div className="min-w-0 space-y-1 text-sm [overflow-wrap:anywhere]">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>Changes by</span>
+    <div className="flex min-w-0 flex-col gap-2 [overflow-wrap:anywhere]">
+      <div className="flex min-h-7 flex-wrap items-center gap-x-2">
+        <span className="text-[13px] font-medium">Changes by</span>
         {loading && (
-          <span className="flex items-center gap-1">
-            <LoaderCircle className="size-3 shrink-0 animate-spin" /> finding who changed what…
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            <LoaderCircle className="size-3.5 shrink-0 animate-spin" /> finding who changed what…
           </span>
         )}
         {selected && !loading && (
-          <button type="button" className="ml-auto flex items-center gap-0.5 hover:text-foreground" onClick={() => onSelect(undefined)}>
+          <button
+            type="button"
+            className="ml-auto flex items-center gap-0.5 rounded-md px-1 py-0.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-9"
+            onClick={() => onSelect(undefined)}
+          >
             <X className="size-3" /> everyone
           </button>
         )}
@@ -51,9 +55,10 @@ export function ContributorList({
             title={`${c.commits} ${c.commits === 1 ? "commit" : "commits"}${c.key.includes("@") ? ` · ${c.key}` : ` · @${c.key}`}`}
             onClick={() => onSelect(selected === c.key ? undefined : c.key)}
             className={cn(
-              "flex max-w-full min-w-0 items-center gap-1.5 rounded-full border py-0.5 pr-2.5 pl-0.5 text-xs hover:bg-muted",
-              selected === c.key && "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
-              selected && selected !== c.key && "opacity-60",
+              "flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border pr-2.5 pl-1 text-xs transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9 pointer-coarse:pl-1.5",
+              // Neutral emphasis: the accent is reserved for primary actions and focus.
+              selected === c.key && "border-foreground bg-foreground text-background hover:bg-foreground/90",
+              selected && selected !== c.key && "text-muted-foreground",
             )}
           >
             {c.avatarUrl ? (
@@ -64,11 +69,12 @@ export function ContributorList({
               </span>
             )}
             <span className="min-w-0 truncate">{c.name}</span>
-            <span className={cn("shrink-0 text-muted-foreground", selected === c.key && "text-primary-foreground/70")}>{c.commits}</span>
+            <span className={cn("shrink-0 text-muted-foreground tabular-nums", selected === c.key && "text-background/70")}>{c.commits}</span>
           </button>
         ))}
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {/* Kept mounted (sr-only while empty) so a later error is announced. */}
+      <p role="alert" className={cn("text-xs text-destructive", !error && "sr-only")}>{error}</p>
     </div>
   );
 }

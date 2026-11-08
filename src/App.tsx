@@ -1,9 +1,10 @@
-import { Page } from "@/components/page";
+import { EmptyState, Page } from "@/components/page";
 import { PullPage } from "@/pages/pull";
 import { PullsPage } from "@/pages/pulls";
 import { ReposPage } from "@/pages/repos";
 import { SourcesPage } from "@/pages/sources";
-import { Route, Switch } from "wouter";
+import { routes } from "@/lib/routes";
+import { Link, Route, Switch } from "wouter";
 import "./index.css";
 
 export function App() {
@@ -16,7 +17,12 @@ export function App() {
       </Route>
       <Route>
         <Page crumbs={[{ label: "Not found" }]}>
-          <p className="text-muted-foreground">Page not found.</p>
+          <EmptyState>
+            Page not found.{" "}
+            <Link href={routes.sources()} className="text-foreground underline underline-offset-4">
+              Back to sources
+            </Link>
+          </EmptyState>
         </Page>
       </Route>
     </Switch>

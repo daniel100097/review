@@ -2,7 +2,26 @@
 
 @layer base {
   :root {
-    @apply font-sans;
+    @apply font-sans antialiased;
+  }
+
+  /* Keyboard focus and in-page scrolls stay clear of the sticky app + file headers (and the phone bottom bar).
+     The diff scrolls with window.scrollTo, which ignores this. */
+  html {
+    scroll-padding-top: 5.5rem;
+    @media (width < 64rem) {
+      scroll-padding-bottom: 4rem;
+    }
+  }
+
+  /* A visible keyboard focus for anything without its own ring (links, summaries, regions). */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  kbd {
+    @apply rounded border bg-muted px-1 font-mono text-[0.85em] text-muted-foreground;
   }
 
   /* Tailwind v4 resets buttons to the default cursor; shadcn/Radix controls are buttons. */
@@ -12,14 +31,27 @@
   }
 }
 
-/* Agent answers (see components/markdown.tsx): compact, to fit in diff threads. */
+/* Agent answers and forge comments (see components/markdown.tsx): compact, to fit in diff threads and popovers. */
 @layer components {
   .markdown {
     & > * + * {
       margin-top: 0.5rem;
     }
-    & :is(h1, h2, h3, h4) {
-      @apply font-semibold;
+    & > * + :is(h1, h2, h3, h4, h5, h6) {
+      margin-top: 1rem;
+    }
+    & :is(h1, h2, h3, h4, h5, h6) {
+      @apply leading-snug font-semibold;
+    }
+    /* Relative, so headings stay in proportion when the body is text-xs. */
+    & h1 {
+      @apply text-[1.15em];
+    }
+    & h2 {
+      @apply text-[1.075em];
+    }
+    & :is(h3, h4, h5, h6) {
+      @apply text-[1em];
     }
     & ul {
       @apply list-disc pl-5;
@@ -27,26 +59,39 @@
     & ol {
       @apply list-decimal pl-5;
     }
-    & li + li {
+    & li + li,
+    & li > :is(ul, ol) {
       margin-top: 0.125rem;
     }
+    & li::marker {
+      @apply text-muted-foreground;
+    }
     & a {
-      @apply underline underline-offset-2;
+      @apply underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground;
     }
     & :not(pre) > code {
-      @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.8em];
+      @apply rounded bg-muted px-1 py-px font-mono text-[0.85em];
     }
     & pre {
-      @apply overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs;
+      @apply overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs leading-5;
     }
     & blockquote {
       @apply border-l-2 pl-3 text-muted-foreground;
     }
+    & hr {
+      @apply border-border;
+    }
+    & img {
+      @apply max-w-full;
+    }
     & table {
-      @apply text-xs;
+      @apply border-collapse text-xs;
     }
     & :is(th, td) {
-      @apply border px-2 py-1 text-left;
+      @apply border border-border px-2 py-1 text-left align-top;
+    }
+    & th {
+      @apply bg-muted/50 font-medium;
     }
   }
 }

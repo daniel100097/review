@@ -9,6 +9,8 @@ export type { HighlightToken };
 /** Token colors for `th-*` classes, switching with the `.dark` class. */
 export const highlightCss = [
   createThemeCss({ light: githubLightTheme, dark: githubDarkTheme, darkSelector: ".dark", includeBaseStyles: false }),
+  // GitHub light's comment grey is under 4.5:1 on the diff's added/deleted tints.
+  ":root:not(.dark) { --th-comment: #59636e; }",
   ...themeTokenClasses.filter(c => c !== "token").map(c => `.th-${c} { color: var(--th-${c}); }`),
 ].join("\n");
 
