@@ -50,7 +50,12 @@ test("persists generated reviews and isolates jobs by repository, source, and co
       await api.cancel({...input,id:next});
       await new Promise(resolve=>setTimeout(resolve,10));
       assert.equal(stopped,true);
-      assert.equal((await api.latest(input)).status,'cancelled');
+      const stoppedRun = await api.latest(input);
+      assert.equal(stoppedRun.status,'cancelled');
+      assert.equal(stoppedRun.previous.id,id);
+      assert.equal(stoppedRun.previous.result.title,'Generated review');
+      assert.equal('baseSource' in stoppedRun.previous || 'headSource' in stoppedRun.previous,false);
+      assert.equal(saved.previous,undefined);
       assert.equal(db.select().from(flowmarkReviews).all().length,2);
     `], {
       cwd: path.resolve(import.meta.dir, "../.."), env: { ...process.env, DATABASE_PATH: path.join(scratch, "test.sqlite") },

@@ -91,6 +91,10 @@ export const reviewFilterActions = {
       for (const folder of folders) query.append("hideFolder", folder);
     });
   },
+  /** Unhides every folder in one history entry, so Back restores them all at once. */
+  clearFolders() {
+    changeFilters(query => query.delete("hideFolder"));
+  },
   setContributor(by?: string) {
     changeFilters(query => by ? query.set("by", by) : query.delete("by"));
   },

@@ -1,3 +1,4 @@
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { RouterOutputs } from "@/lib/trpc";
@@ -6,17 +7,27 @@ import { useState, type ReactNode } from "react";
 
 export type Comment = RouterOutputs["pulls"]["comments"][number];
 
+/** A forge comment: avatar, name and time on one line, the Markdown body indented under them. */
 export function CommentItem({ comment, context }: { comment: Comment; context?: ReactNode }) {
+  const { author } = comment;
   return (
-    <div className="flex min-w-0 gap-3 [overflow-wrap:anywhere]">
-      {comment.author.avatarUrl && <img src={comment.author.avatarUrl} alt="" className="size-7 shrink-0 rounded-full" />}
-      <div className="min-w-0 flex-1 rounded-md border bg-card">
-        <div className="flex flex-wrap items-center gap-x-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{comment.author.name}</span>
-          <span>{timeAgo(comment.createdAt)}</span>
+    <div className="flex min-w-0 gap-2 font-sans [overflow-wrap:anywhere]">
+      {author.avatarUrl ? (
+        <img src={author.avatarUrl} alt="" className="size-6 shrink-0 rounded-full bg-muted" />
+      ) : (
+        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">
+          {author.name.slice(0, 1).toUpperCase()}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-h-6 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <span className="text-sm font-medium text-foreground">{author.name}</span>
+          <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
+            {timeAgo(comment.createdAt)}
+          </time>
           {context}
         </div>
-        <div className="px-3 py-2 text-sm whitespace-pre-wrap">{comment.body}</div>
+        <Markdown className="mt-1">{comment.body}</Markdown>
       </div>
     </div>
   );
@@ -38,6 +49,7 @@ export function CommentForm({
   const [error, setError] = useState<string>();
 
   const submit = async () => {
+    if (!body.trim() || pending) return;
     setPending(true);
     setError(undefined);
     try {
@@ -59,10 +71,11 @@ export function CommentForm({
       }}
     >
       <Textarea
-        className="min-h-24 min-w-0 resize-y"
+        className="min-h-20 min-w-0 resize-y"
         value={body}
         onChange={e => setBody(e.target.value)}
         placeholder={placeholder}
+        aria-label="Comment"
         autoFocus={autoFocus}
         onKeyDown={e => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();

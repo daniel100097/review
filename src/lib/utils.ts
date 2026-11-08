@@ -22,3 +22,17 @@ export function timeAgo(iso: string) {
   }
   return "just now";
 }
+
+/**
+ * Scrolls `element` into view inside its nearest scrollable ancestor only. `scrollIntoView` would also scroll the
+ * window (and honour the page's scroll-padding), which moves the virtualized diff.
+ */
+export function revealInScrollParent(element: HTMLElement) {
+  let parent = element.parentElement;
+  while (parent && !/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) parent = parent.parentElement;
+  if (!parent) return;
+  const box = element.getBoundingClientRect();
+  const view = parent.getBoundingClientRect();
+  if (box.top < view.top) parent.scrollTop -= view.top - box.top + 8;
+  else if (box.bottom > view.bottom) parent.scrollTop += box.bottom - view.bottom + 8;
+}

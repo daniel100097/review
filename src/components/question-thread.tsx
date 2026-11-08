@@ -34,7 +34,7 @@ export function useAgentModel(storageKey: string, fallback: AgentModel["model"])
 export function ModelPicker({ value, onChange }: { value: AgentModel; onChange: (m: AgentModel) => void }) {
   return (
     <Select value={modelKey(value)} onValueChange={key => onChange(agentModels.find(m => modelKey(m) === key)!)}>
-      <SelectTrigger size="sm" className="w-44 max-w-full min-w-0" aria-label="Model">
+      <SelectTrigger size="sm" className="w-auto max-w-full min-w-36 pointer-coarse:h-9" aria-label="Model">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -52,6 +52,15 @@ export function ModelPicker({ value, onChange }: { value: AgentModel; onChange: 
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+/** Marks a thread or walkthrough made for an earlier head commit. */
+export function EarlierPush({ title }: { title?: string }) {
+  return (
+    <Badge variant="secondary" title={title} className="font-normal text-muted-foreground">
+      earlier push
+    </Badge>
   );
 }
 
@@ -74,6 +83,11 @@ export function LineComposer({
   const [pending, setPending] = useState<"ask" | "comment">();
   const [error, setError] = useState<string>();
   const [model, setModel] = useAgentModel("agentModel", "sonnet");
+  const [touch] = useState(() => matchMedia("(pointer: coarse)").matches);
+  // Where line numbers are the buttons (touch, narrow windows), tapping or clicking another one extends the
+  // selection, as there's no shift-click on touch and no + to shift-click (see DiffList).
+  const [lineNumbers] = useState(() => matchMedia("(pointer: coarse), (max-width: 639px)").matches);
+  const lines = lineCount === 1 ? "this line" : `these ${lineCount} lines`;
 
   const submit = async (kind: "ask" | "comment") => {
     if (!body.trim() || pending) return;
@@ -98,10 +112,11 @@ export function LineComposer({
       }}
     >
       <Textarea
-        className="min-h-24 min-w-0 resize-y"
+        className="min-h-20 min-w-0 resize-y"
         value={body}
         onChange={e => setBody(e.target.value)}
-        placeholder={`Ask about ${lineCount === 1 ? "this line" : `these ${lineCount} lines`}, or write a comment. Shift-click another line's + to select a range.`}
+        aria-label={`Question or comment about ${lines}`}
+        placeholder={`Ask about ${lines}, or write a comment. ${lineNumbers ? "Tap or click another line number" : "Shift-click another line's +"} to select a range.`}
         autoFocus
         onKeyDown={e => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit("ask");
@@ -109,25 +124,31 @@ export function LineComposer({
         }}
       />
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <ModelPicker value={model} onChange={setModel} />
-        <Button type="submit" size="sm" disabled={Boolean(pending) || !body.trim()} title="Ask (Ctrl+Enter). Stays local.">
-          <Sparkles /> {pending === "ask" ? "Asking…" : "Ask"}
+      {/* Cancel sits apart from Comment, the one button here that publishes something. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
         </Button>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={Boolean(pending) || !body.trim()}
-            onClick={() => submit("comment")}
-            title="Post as a comment on the pull request"
-          >
-            {pending === "comment" ? "Posting…" : "Comment"}
-          </Button>
+        <span className="mr-auto text-xs text-muted-foreground">{touch ? "Asking stays local" : "Ctrl+Enter asks · stays local"}</span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ModelPicker value={model} onChange={setModel} />
+          {/* Together, so Comment never ends up alone on a row on narrow screens. */}
+          <div className="flex items-center gap-2">
+            <Button type="submit" size="sm" disabled={Boolean(pending) || !body.trim()} title="Ask an agent (Ctrl+Enter). Stays local.">
+              <Sparkles /> {pending === "ask" ? "Asking…" : "Ask"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="ml-2"
+              disabled={Boolean(pending) || !body.trim()}
+              onClick={() => submit("comment")}
+              title="Post as a comment on the pull request"
+            >
+              {pending === "comment" ? "Posting…" : "Comment"}
+            </Button>
+          </div>
         </div>
       </div>
     </form>
@@ -148,34 +169,40 @@ export function QuestionThreadView({
   actions: QuestionActions;
 }) {
   const running = thread.messages.some(m => m.status === "running");
+  // Announce an answer once it has finished, not while it streams, nor old ones as the diff scrolls them into view.
+  const [watched, setWatched] = useState(running);
+  if (running && !watched) setWatched(true);
+  const finished = watched && !running ? thread.messages.at(-1)?.status : undefined;
   return (
-    <div className="flex min-w-0 gap-3 font-sans [overflow-wrap:anywhere]">
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-400">
-        <Sparkles className="size-4" />
-      </div>
-      <div className="min-w-0 flex-1 rounded-md border border-violet-500/30 bg-card">
-        <div className="flex flex-wrap items-center gap-x-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{modelLabel(thread.agent, thread.model)}</span>
-          <span>{timeAgo(new Date(thread.createdAt).toISOString())}</span>
-          <span title="Only stored in this app, not on the forge">· local</span>
-          {stale && (
-            <Badge variant="outline" title={`Asked on ${thread.headSha.slice(0, 8)}`}>
-              earlier push
-            </Badge>
-          )}
-          <button
-            type="button"
-            className="ml-auto rounded p-0.5 hover:bg-muted hover:text-foreground"
+    <div className="flex min-w-0 gap-2 font-sans [overflow-wrap:anywhere]">
+      <span role="status" className="sr-only">
+        {finished === "done" ? "Answer ready" : finished === "failed" ? "Answer failed" : finished === "cancelled" ? "Answer stopped" : ""}
+      </span>
+      <span className="flex size-6 shrink-0 items-center justify-center">
+        <Sparkles aria-label="Agent" className="size-4 text-ai" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-h-6 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <span className="text-sm font-medium text-foreground">{modelLabel(thread.agent, thread.model)}</span>
+          <span>
+            {timeAgo(new Date(thread.createdAt).toISOString())} · <span title="Only stored in this app, not on the forge">local</span>
+          </span>
+          {stale && <EarlierPush title={`Asked on ${thread.headSha.slice(0, 8)}`} />}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto size-6 text-muted-foreground hover:text-foreground pointer-coarse:size-9"
             title="Delete this conversation"
+            aria-label="Delete this conversation"
             onClick={() => actions.remove(thread.id)}
           >
             <Trash2 className="size-3.5" />
-          </button>
+          </Button>
         </div>
         {showExcerpt && (
-          <pre className="max-w-full overflow-x-auto border-b bg-muted/50 px-3 py-1.5 font-mono text-xs whitespace-pre [overflow-wrap:normal]">{thread.excerpt}</pre>
+          <pre className="mt-1 max-w-full overflow-x-auto rounded-md bg-muted px-2 py-1 font-mono text-xs whitespace-pre [overflow-wrap:normal]">{thread.excerpt}</pre>
         )}
-        <div className="space-y-3 px-3 py-2">
+        <div className="mt-1 space-y-3">
           {thread.messages.map((m, i) =>
             m.role === "user" ? (
               <p key={m.id} className={cn("text-sm font-medium whitespace-pre-wrap", i > 0 && "border-t pt-3")}>
@@ -197,7 +224,7 @@ function AgentMessage({ message: m, onCancel }: { message: QuestionThread["messa
     <div className="space-y-2">
       {m.notes && (
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer select-none">Agent notes</summary>
+          <summary className="cursor-pointer select-none hover:text-foreground">Agent notes</summary>
           <div className="mt-1 border-l-2 pl-3">
             <Markdown>{m.notes}</Markdown>
           </div>
@@ -206,10 +233,10 @@ function AgentMessage({ message: m, onCancel }: { message: QuestionThread["messa
       {m.body && <Markdown>{m.body}</Markdown>}
       {m.status === "running" && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-3.5 animate-spin" />
+          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-ai" />
           <span className="min-w-0 truncate">{m.activity ?? "Working"}…</span>
-          <Button variant="ghost" size="sm" className="ml-auto h-6 px-2 text-xs" onClick={onCancel}>
-            <Square className="size-3" /> Stop
+          <Button variant="ghost" size="xs" className="ml-auto" onClick={onCancel}>
+            <Square /> Stop
           </Button>
         </div>
       )}
@@ -219,6 +246,7 @@ function AgentMessage({ message: m, onCancel }: { message: QuestionThread["messa
   );
 }
 
+/** One slim row under a thread; the textarea grows with its content. Enter asks, Shift+Enter adds a line. */
 function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknown> }) {
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
@@ -238,7 +266,7 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
   };
   return (
     <form
-      className="flex flex-wrap items-start gap-2 border-t px-3 py-2"
+      className="mt-2 flex min-w-0 flex-wrap items-end gap-2"
       onSubmit={e => {
         e.preventDefault();
         submit();
@@ -248,8 +276,9 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
         value={body}
         onChange={e => setBody(e.target.value)}
         placeholder="Ask a follow-up"
+        aria-label="Ask a follow-up"
         rows={1}
-        className={cn("min-h-16 min-w-0 resize-none py-2 text-base sm:flex-1 md:min-h-8 md:py-1.5 md:text-sm", body.includes("\n") && "resize-y")}
+        className="max-h-40 min-h-8 min-w-0 flex-1 resize-none py-1 pointer-coarse:min-h-9 pointer-coarse:py-1.5"
         onKeyDown={e => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -257,8 +286,8 @@ function FollowUp({ onSubmit }: { onSubmit: (question: string) => Promise<unknow
           }
         }}
       />
-      <Button type="submit" size="sm" variant="secondary" className="ml-auto" disabled={pending || !body.trim()}>
-        Ask
+      <Button type="submit" size="sm" variant="outline" disabled={pending || !body.trim()}>
+        {pending ? "Asking…" : "Ask"}
       </Button>
       {error && <p className="w-full text-sm text-destructive">{error}</p>}
     </form>

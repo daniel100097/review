@@ -1,8 +1,8 @@
 import type { File } from "@/components/diff-list";
 import { hiddenFolderOf, isInHiddenFolder } from "@/lib/hidden-files";
-import { cn } from "@/lib/utils";
+import { cn, revealInScrollParent } from "@/lib/utils";
 import { ChevronRight, Circle, CircleCheck, Eye, EyeOff, Folder } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface Dir {
   name: string;
@@ -53,16 +53,24 @@ export function FileTree({
   tree,
   hiddenFolders,
   visiblePaths,
+  current,
   onSelect,
   onFolderHiddenChange,
 }: {
   tree: Dir;
   hiddenFolders: readonly string[];
   visiblePaths?: ReadonlySet<string>;
+  /** The file being read in the diff; highlighted and kept in view. */
+  current?: string;
   onSelect: (path: string) => void;
   onFolderHiddenChange: (path: string, hidden: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(() => new Map<string, boolean>());
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const row = list.current?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (row) revealInScrollParent(row);
+  }, [current]);
   const toggle = (path: string, open: boolean) => setExpanded(prev => new Map(prev).set(path, !open));
   const isHidden = (file: File) =>
     visiblePaths ? !visiblePaths.has(file.newPath) : isInHiddenFolder(file, hiddenFolders);
@@ -77,7 +85,7 @@ export function FileTree({
     const filterHidden = fullyHidden && !hiddenBy;
     return (
       <li key={dir.path}>
-        <div className="group flex items-center rounded hover:bg-muted" style={{ paddingLeft: depth * 12 }}>
+        <div className="group flex items-center rounded-md hover:bg-accent" style={{ paddingLeft: depth * 12 }}>
           <button
             type="button"
             disabled={!!hiddenBy}
@@ -85,27 +93,16 @@ export function FileTree({
             title={dir.path}
             aria-expanded={open}
             aria-label={`${dir.path}${hiddenCount ? ` (${hiddenCount} hidden)` : ""}`}
-            className="flex min-h-9 min-w-0 flex-1 items-center gap-1 py-1 pl-1 text-left disabled:cursor-default sm:min-h-0"
+            className="flex min-h-7 min-w-0 flex-1 items-center gap-1 rounded-md py-1 pl-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default pointer-coarse:min-h-9"
           >
-            <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
-            <Folder
-              className={cn(
-                "size-3.5 shrink-0",
-                files.every(f => f.viewed) && "text-green-600",
-                hiddenCount > 0 && "text-amber-700 dark:text-amber-400",
-              )}
-            />
-            <span
-              className={cn(
-                "truncate",
-                hiddenCount > 0 && "text-amber-700 dark:text-amber-400",
-                fullyHidden && "line-through",
-              )}
-            >
+            <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+            <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+            {/* Only the count is coloured, so a filter doesn't turn half the tree amber. */}
+            <span className={cn("truncate", (fullyHidden || hiddenBy) && "text-muted-foreground line-through")}>
               {dir.name}
             </span>
             {hiddenCount > 0 && (
-              <span className="shrink-0 text-amber-700 dark:text-amber-400">({hiddenCount} hidden)</span>
+              <span className="ml-auto shrink-0 pr-1 text-xs text-warning tabular-nums">({hiddenCount} hidden)</span>
             )}
           </button>
           <button
@@ -120,8 +117,9 @@ export function FileTree({
             }
             onClick={() => onFolderHiddenChange(hiddenBy ?? dir.path, !hiddenBy)}
             className={cn(
-              "mr-1 flex size-9 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground enabled:hover:bg-background enabled:hover:text-foreground disabled:cursor-default sm:size-auto",
-              !hiddenBy && !filterHidden && "sm:invisible sm:group-hover:visible sm:group-focus-within:visible focus-visible:visible [@media(hover:none)]:visible",
+              "mr-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-background enabled:hover:text-foreground disabled:cursor-default pointer-coarse:size-9",
+              // With a mouse, the eye shows on hover; it stays focusable (opacity, not visibility) for keyboards.
+              !hiddenBy && !filterHidden && "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 focus-visible:opacity-100",
             )}
           >
             {hiddenBy ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
@@ -140,43 +138,46 @@ export function FileTree({
   const renderFile = (file: File, depth: number) => {
     const hidden = isHidden(file);
     const label = `${file.newPath}${hidden ? " (hidden by current filters)" : ""}`;
+    const status = file.status === "added" ? "A" : file.status === "deleted" ? "D" : file.status === "renamed" ? "R" : undefined;
+    const isCurrent = current === file.newPath;
     return (
       <li key={file.newPath}>
         <button
           type="button"
           title={label}
-          aria-label={label}
+          aria-label={[file.newPath, file.status !== "modified" && file.status, file.viewed && "viewed", hidden && "hidden by current filters"].filter(Boolean).join(", ")}
+          aria-current={isCurrent ? "true" : undefined}
           disabled={hidden}
           onClick={() => onSelect(file.newPath)}
           style={{ paddingLeft: depth * 12 + 4 }}
           className={cn(
-            "flex min-h-9 w-full items-center gap-1.5 rounded py-1 pr-1 text-left enabled:hover:bg-muted disabled:cursor-default sm:min-h-0",
+            "flex min-h-7 w-full items-center gap-1.5 rounded-md py-1 pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring enabled:hover:bg-accent disabled:cursor-default pointer-coarse:min-h-9",
             file.viewed && "text-muted-foreground",
-            hidden && "text-amber-700 dark:text-amber-400",
+            hidden && "text-muted-foreground/70",
+            isCurrent && "bg-accent font-medium text-foreground",
           )}
         >
           {file.viewed ? (
-            <CircleCheck className="size-3.5 shrink-0 text-green-600" />
+            <CircleCheck className="size-3.5 shrink-0 text-success" />
           ) : (
-            <Circle className="size-3.5 shrink-0" />
+            <Circle className="size-3.5 shrink-0 text-muted-foreground/60" />
           )}
-          <span
-            className={cn(
-              "truncate",
-              !hidden && file.status === "added" && "text-green-700 dark:text-green-400",
-              !hidden && file.status === "deleted" && "text-red-700 dark:text-red-400",
-              file.status === "deleted" && "line-through",
-            )}
-          >
+          <span className={cn("truncate", (hidden || file.status === "deleted") && "line-through")}>
             {baseName(file.newPath)}
           </span>
+          {/* Like an editor's source-control view: a quiet letter, so green only ever means "viewed". */}
+          {status && (
+            <span aria-hidden className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
+              {status}
+            </span>
+          )}
         </button>
       </li>
     );
   };
 
   return (
-    <ul className="font-mono text-xs">
+    <ul ref={list} className="text-[13px]">
       {tree.dirs.map(d => renderDir(d, 0))}
       {tree.files.map(f => renderFile(f, 0))}
     </ul>

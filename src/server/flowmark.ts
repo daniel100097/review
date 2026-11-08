@@ -15,16 +15,24 @@ const jobs = ((globalThis as any).__codereviewFlowmarkJobs ??= new Map()) as Map
 db.update(flowmarkReviews).set({ status: "failed", error: "Interrupted by a server restart." })
   .where(and(eq(flowmarkReviews.status, "running"), notInArray(flowmarkReviews.id, [...jobs.keys()]))).run();
 
-function latest(sourceId: number, repo: string, number: number) {
+function latest(sourceId: number, repo: string, number: number, status?: "done") {
   return db.select().from(flowmarkReviews)
-    .where(and(eq(flowmarkReviews.sourceId, sourceId), eq(flowmarkReviews.repo, repo), eq(flowmarkReviews.number, number)))
+    .where(and(
+      eq(flowmarkReviews.sourceId, sourceId), eq(flowmarkReviews.repo, repo), eq(flowmarkReviews.number, number),
+      status && eq(flowmarkReviews.status, status),
+    ))
     .orderBy(desc(flowmarkReviews.id)).get();
 }
 
 export const flowmarkRouter = router({
   latest: sourceProcedure.input(scope).query(({ input: { sourceId, repo, number } }) => {
     const row = latest(sourceId, repo, number);
-    return row ? { ...row, activity: jobs.get(row.id)?.activity } : null;
+    if (!row) return null;
+    // While a newer run is going, failed or was stopped, the last finished review stays readable. Without its source
+    // documents (~190 KB together), which every 1.5 s poll of a running review would otherwise re-send.
+    const done = row.status === "done" ? undefined : latest(sourceId, repo, number, "done");
+    const previous = done && (({ baseSource, headSource, ...review }) => review)(done);
+    return { ...row, activity: jobs.get(row.id)?.activity, previous };
   }),
 
   start: sourceProcedure.input(scope.extend({
