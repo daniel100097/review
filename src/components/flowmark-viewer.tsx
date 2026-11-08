@@ -45,8 +45,9 @@ export function FlowmarkViewer({ model, active = true }: { model: FlowmarkModel;
   };
 
   // Fill the window below the frame's top (minus the page's 1.5rem bottom padding) next to the sidebar; below lg, fill
-  // the screen under the 48px header once the page is scrolled to the frame. Auto-height would break the viewer's
-  // sticky header and its own scrolling.
+  // the screen under the 48px header once the page is scrolled to the frame (the page's bottom padding is 1rem
+  // below sm, so the frame is taller there, or the page couldn't scroll that far). Auto-height would break the
+  // viewer's sticky header and its own scrolling.
   useLayoutEffect(() => {
     const measure = () => {
       const box = frame.current?.getBoundingClientRect();
@@ -58,6 +59,15 @@ export function FlowmarkViewer({ model, active = true }: { model: FlowmarkModel;
     return () => observer.disconnect();
   }, []);
 
+  // Below lg, bring the frame under the header when the tab opens (or the review arrives on it): a swipe on the
+  // frame scrolls the review, not the page, so the review would otherwise be read through what's left of the
+  // window. The title and the actions above stay a swipe up away, as the frame chains scrolling at its top.
+  useLayoutEffect(() => {
+    if (!active || !matchMedia("(width < 64rem)").matches) return;
+    const box = frame.current?.getBoundingClientRect();
+    if (box?.width) window.scrollTo({ top: Math.round(box.top + window.scrollY - 48) });
+  }, [active]);
+
   useEffect(() => {
     const observer = new MutationObserver(theme);
     observer.observe(window.document.documentElement, { attributes: true, attributeFilter: ["class"] });
@@ -65,7 +75,8 @@ export function FlowmarkViewer({ model, active = true }: { model: FlowmarkModel;
       const text = event.data?.text;
       if (event.source !== frame.current?.contentWindow || event.data?.type !== "flowmark-copy" || typeof text !== "string" || text.length > 20000) return;
       // Only right after a click or key press: a click in the frame also activates this page, a script alone doesn't.
-      if (!navigator.userActivation?.isActive) return;
+      // Browsers without the API (Firefox before 120, Safari before 16.4) still copy.
+      if (navigator.userActivation && !navigator.userActivation.isActive) return;
       try {
         if (navigator.clipboard) await navigator.clipboard.writeText(text);
         else {
@@ -112,7 +123,7 @@ export function FlowmarkViewer({ model, active = true }: { model: FlowmarkModel;
         srcDoc={document}
         onLoad={load}
         style={{ "--frame-top": `${top}px` } as CSSProperties}
-        className="block h-[calc(100dvh-4.5rem)] w-full min-w-0 rounded-lg border bg-background lg:h-[max(calc(100dvh-var(--frame-top)-1.5rem),36rem)]"
+        className="block h-[calc(100dvh-4rem)] w-full min-w-0 rounded-lg border bg-background sm:h-[calc(100dvh-4.5rem)] lg:h-[max(calc(100dvh-var(--frame-top)-1.5rem),36rem)]"
       />
       <p
         role="status"

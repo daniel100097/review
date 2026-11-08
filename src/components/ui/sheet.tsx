@@ -20,7 +20,7 @@ const sides = {
 };
 
 /**
- * `title` is required for screen readers; `description` defaults to visually hidden.
+ * `title` is required for screen readers; `description` is optional and visually hidden unless `showDescription`.
  * The body scrolls; `footer` stays pinned at the bottom.
  */
 function SheetContent({
@@ -50,6 +50,8 @@ function SheetContent({
           className,
         )}
         {...props}
+        // Radix's documented opt-out when there's no description; repeating the title would be read twice.
+        {...(description ? undefined : { "aria-describedby": undefined })}
       >
         <div className="flex h-12 shrink-0 items-center gap-2 border-b pr-2 pl-4">
           <Dialog.Title className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</Dialog.Title>
@@ -59,9 +61,11 @@ function SheetContent({
             </Button>
           </Dialog.Close>
         </div>
-        <Dialog.Description className={showDescription ? "px-4 pt-3 text-xs text-muted-foreground" : "sr-only"}>
-          {description ?? title}
-        </Dialog.Description>
+        {description && (
+          <Dialog.Description className={showDescription ? "px-4 pt-3 text-xs text-muted-foreground" : "sr-only"}>
+            {description}
+          </Dialog.Description>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">{children}</div>
         {footer && <div className="shrink-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{footer}</div>}
       </Dialog.Content>

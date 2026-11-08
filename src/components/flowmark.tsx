@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CircleStop, Download, FileText, LoaderCircle, RefreshCw, Sparkles, TriangleAlert, X } from "lucide-react";
-import { QueryError } from "@/components/page";
+import { MetaRow, QueryError } from "@/components/page";
 import { EarlierPush, ModelPicker, useAgentModel } from "@/components/question-thread";
 import { FlowmarkViewer } from "@/components/flowmark-viewer";
 import { Button } from "@/components/ui/button";
@@ -279,27 +279,20 @@ function GenerateForm({ flowmark: f, running, label, onStart }: { flowmark: Flow
 }
 
 function ReviewMeta({ review }: { review: Saved }) {
-  // Each item brings its own leading "·"; the row is pulled left and clipped, so a wrapped line never starts with one.
   return (
-    <div className="min-w-0 overflow-hidden text-xs text-muted-foreground">
-      <div className="-ml-3 flex flex-wrap items-center gap-y-0.5">
-        {[
-          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-            <Sparkles aria-hidden className="size-3.5 text-ai" /> {modes[review.mode].label}
-          </span>,
-          modelLabel(review.agent, review.model),
-          <code className="font-mono tabular-nums" title={`Base ${review.baseSha}, head ${review.headSha}`}>
-            {review.baseSha.slice(0, 7)} → {review.headSha.slice(0, 7)}
-          </code>,
-          <Ago date={review.createdAt} />,
-        ].map((item, i) => (
-          <span key={i} className="inline-flex min-w-0 max-w-full items-center">
-            <span aria-hidden className="w-3 shrink-0 text-center">·</span>
-            {item}
-          </span>
-        ))}
-      </div>
-    </div>
+    <MetaRow className="text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">
+        <Sparkles aria-hidden className="mr-1.5 size-3.5 text-ai" />
+        {modes[review.mode].label}
+      </span>
+      <span>{modelLabel(review.agent, review.model)}</span>
+      <span>
+        <code className="font-mono tabular-nums" title={`Base ${review.baseSha}, head ${review.headSha}`}>
+          {review.baseSha.slice(0, 7)} → {review.headSha.slice(0, 7)}
+        </code>
+      </span>
+      <span><Ago date={review.createdAt} /></span>
+    </MetaRow>
   );
 }
 

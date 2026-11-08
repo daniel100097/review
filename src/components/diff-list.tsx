@@ -26,6 +26,8 @@ export type { File };
 const largeDiffLines = 500;
 /** The app header (h-12) that rows scroll under; file headers stick below it. */
 const appHeaderHeight = 48;
+/** What can hold focus in a row: the row's own target (file header, group band) and its controls. */
+const focusable = "[tabindex], button, a[href], input, select, textarea";
 
 type Row = { key: string } & (
   | { kind: "gap" }
@@ -621,6 +623,47 @@ export function DiffList({
   const active = document.activeElement;
   const focusedRow = listRef.current?.contains(active) ? active!.closest("[data-index]")?.getAttribute("data-index") : undefined;
 
+  // A file header remounts when it moves between the sticky slot and the list (different parents), which drops
+  // focus from it, or a button in it, to the page. So remember what's focused in the list, and give the new copy
+  // focus in the render that moved it. Only then: a closed form or expanded lines also remove the focused element
+  // but don't move its row, and a row that comes back later mustn't take focus back. Not when focus left on
+  // purpose either, like a click on the page: the element is still there afterwards (Chrome blurs a removed
+  // element too, so that's checked after the removal).
+  const focusMemory = useRef<{ index: string; sticky: boolean; control: number; element: Element }>(null);
+  useEffect(() => {
+    const remember = (e: FocusEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const row = target && listRef.current?.contains(target) ? target.closest<HTMLElement>("[data-index]") : null;
+      focusMemory.current = row && {
+        index: row.dataset.index!,
+        sticky: row.parentElement === listRef.current,
+        control: [...row.querySelectorAll(focusable)].indexOf(target!),
+        element: target!,
+      };
+    };
+    const forget = (e: FocusEvent) => {
+      const element = e.target;
+      if (e.relatedTarget || !(element instanceof Element)) return;
+      queueMicrotask(() => { if (element.isConnected && focusMemory.current?.element === element) focusMemory.current = null; });
+    };
+    document.addEventListener("focusin", remember);
+    document.addEventListener("focusout", forget);
+    return () => {
+      document.removeEventListener("focusin", remember);
+      document.removeEventListener("focusout", forget);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const memory = focusMemory.current;
+    if (!memory || memory.element.isConnected) return;
+    focusMemory.current = null;
+    if (document.activeElement !== document.body) return;
+    // The copy keeps its index, so the same control is at the same place. Silently a no-op on an inert row.
+    const row = listRef.current?.querySelector(`[data-index="${memory.index}"]`);
+    if (!row || (row.parentElement === listRef.current) === memory.sticky) return;
+    row.querySelectorAll<HTMLElement>(focusable)[memory.control]?.focus({ preventScroll: true });
+  });
+
   // Closing the focused form (or virtualizing its row away) removes the text field without a blur reaching the
   // list, which would leave the bars below lg hidden. So clear it with the form, and check focus after every render.
   const closeComposer = () => {
@@ -951,7 +994,8 @@ function RowView({ row, actions, wrapLines, find }: RowViewProps) {
       const number = cn("px-1 text-right text-muted-foreground tabular-nums select-none sm:px-2", gutterTint[line.kind]);
       const lineNumber = line.newLine ?? line.oldLine;
       // Hunk headers stay one line (a function signature would wrap to several on phones), unless the current
-      // find match is in them.
+      // find match is in them. The rest is in the tooltip, or on touch screens, where there is none, a swipe away
+      // (without the ellipsis: Chrome doesn't paint what it elides, so the line would scroll into nothing).
       const clip = line.kind === "hunk" && find?.current?.rowKey !== row.key;
       // Shift extends the selection in the same file.
       const start = (extend: boolean) => actions.startComment(row.parsed, row.index, extend);
@@ -1014,7 +1058,7 @@ function RowView({ row, actions, wrapLines, find }: RowViewProps) {
           <span
             className={cn(
               "-indent-3 pr-1 pl-3 sm:pr-4",
-              clip ? "min-w-0 overflow-hidden text-ellipsis whitespace-pre" : wrapLines ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "min-w-max whitespace-pre",
+              clip ? "min-w-0 overflow-hidden text-ellipsis whitespace-pre pointer-coarse:overflow-x-auto pointer-coarse:text-clip pointer-coarse:[scrollbar-width:none]" : wrapLines ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "min-w-max whitespace-pre",
             )}
             title={clip && line.content ? line.content : undefined}
           >
