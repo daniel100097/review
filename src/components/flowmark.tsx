@@ -225,7 +225,7 @@ function RunProgress({ run, stopping }: { run: Run; stopping: boolean }) {
       <h2 className="text-base font-semibold tracking-tight">Generating {run.mode} with {run.model}</h2>
       <p role="status" title={run.activity} className="max-w-full truncate text-sm text-muted-foreground">{run.activity}</p>
       <p className="text-xs text-muted-foreground tabular-nums">
-        {run.since && `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} elapsed · `}runs take up to 10 minutes
+        {run.since && `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} elapsed · `}runs take up to 30 minutes
       </p>
       {run.stop && (
         <Button size="sm" variant="outline" onClick={run.stop} disabled={stopping}>

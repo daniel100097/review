@@ -51,7 +51,7 @@ export const flowmarkRouter = router({
     const row = db.insert(flowmarkReviews).values({ ...input, status: "running" }).returning().get();
     const job = { activity: "Loading the PR snapshot", abort: new AbortController() };
     jobs.set(row.id, job);
-    const timeout = AbortSignal.timeout(600_000);
+    const timeout = AbortSignal.timeout(30 * 60_000);
     const signal = AbortSignal.any([job.abort.signal, timeout]);
     const finish = (values: Partial<typeof flowmarkReviews.$inferInsert>) => {
       db.update(flowmarkReviews).set(values).where(eq(flowmarkReviews.id, row.id)).run();
@@ -64,7 +64,7 @@ export const flowmarkRouter = router({
       review => finish({ status: "done", baseSource: review.base, headSource: review.head, result: review.result }),
       error => finish(job.abort.signal.aborted
         ? { status: "cancelled" }
-        : { status: "failed", error: timeout.aborted ? "Flowmark generation timed out. Try a narrower focus." : String(error?.message ?? error) }),
+        : { status: "failed", error: timeout.aborted ? "Flowmark generation timed out after 30 minutes. Try a narrower focus." : String(error?.message ?? error) }),
     );
     return row.id;
   }),
